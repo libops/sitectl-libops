@@ -7,15 +7,17 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/auth"
 	"github.com/libops/sitectl/pkg/format"
 	"github.com/spf13/cobra"
 )
 
 var createAPIKeyCmd = &cobra.Command{
-	Use:   "apikey",
-	Short: "Create a new API key",
+	Use:     "apikey",
+	Aliases: []string{"api-key"},
+	Short:   "Create a new API key",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -66,13 +68,26 @@ var createAPIKeyCmd = &cobra.Command{
 		fmt.Printf("\n")
 		fmt.Printf("⚠️  Save this API key now. It will not be shown again.\n")
 
+		saveKey, err := cmd.Flags().GetBool("save")
+		if err != nil {
+			return err
+		}
+		if saveKey {
+			keyPath, err := auth.SaveAPIKey(resp.Msg.ApiKey)
+			if err != nil {
+				return fmt.Errorf("failed to save API key: %w", err)
+			}
+			fmt.Printf("Saved API key to: %s\n", keyPath)
+		}
+
 		return nil
 	},
 }
 
 var listAPIKeysCmd = &cobra.Command{
-	Use:   "apikeys",
-	Short: "List API keys",
+	Use:     "apikeys",
+	Aliases: []string{"api-keys"},
+	Short:   "List API keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -154,9 +169,10 @@ var listAPIKeysCmd = &cobra.Command{
 }
 
 var deleteAPIKeyCmd = &cobra.Command{
-	Use:   "apikey <api-key-id>",
-	Short: "Delete (revoke) an API key",
-	Args:  cobra.ExactArgs(1),
+	Use:     "apikey <api-key-id>",
+	Aliases: []string{"api-key"},
+	Short:   "Delete (revoke) an API key",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiKeyID := args[0]
 
@@ -207,6 +223,7 @@ func init() {
 	createAPIKeyCmd.Flags().String("name", "", "API key name (required)")
 	createAPIKeyCmd.Flags().String("description", "", "API key description")
 	createAPIKeyCmd.Flags().StringSlice("scopes", []string{}, "API key scopes (e.g., organization:read, project:write)")
+	createAPIKeyCmd.Flags().Bool("save", false, "Save the created API key to ~/.sitectl/key for future CLI requests")
 	_ = createAPIKeyCmd.MarkFlagRequired("name")
 
 	// Delete API key flags

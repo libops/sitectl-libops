@@ -7,10 +7,10 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/api/proto/libops/v1/common"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/resources"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/proto/libops/v1/common"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/resources"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -20,13 +20,10 @@ var editCmd = &cobra.Command{
 	Short: "Edit resources",
 }
 
-// buildFieldMask creates a field mask from changed flags
-func buildFieldMask(cmd *cobra.Command, flagNames []string) *fieldmaskpb.FieldMask {
-	var paths []string
-	for _, flagName := range flagNames {
+func buildFieldMaskFromMap(cmd *cobra.Command, fieldPaths map[string]string) *fieldmaskpb.FieldMask {
+	paths := make([]string, 0, len(fieldPaths))
+	for flagName, fieldPath := range fieldPaths {
 		if cmd.Flags().Changed(flagName) {
-			// Convert flag name to field path (kebab-case to snake_case)
-			fieldPath := flagToFieldPath(flagName)
 			paths = append(paths, fieldPath)
 		}
 	}
@@ -34,22 +31,6 @@ func buildFieldMask(cmd *cobra.Command, flagNames []string) *fieldmaskpb.FieldMa
 		return nil
 	}
 	return &fieldmaskpb.FieldMask{Paths: paths}
-}
-
-// flagToFieldPath converts kebab-case flag names to snake_case field paths
-func flagToFieldPath(flagName string) string {
-	// For nested fields in protobuf, we need to use dot notation
-	// Example: "organization-name" -> "organization_name"
-	result := ""
-	for i, c := range flagName {
-		if c == '-' {
-			result += "_"
-		} else {
-			result += string(c)
-		}
-		_ = i
-	}
-	return result
 }
 
 var editOrganizationCmd = &cobra.Command{
@@ -79,25 +60,21 @@ var editOrganizationCmd = &cobra.Command{
 			folderConfig.OrganizationName = name
 		}
 
-		if cmd.Flags().Changed("location") {
-			location, _ := cmd.Flags().GetString("location")
-			folderConfig.Location = common.Location(common.Location_value[location])
+		if cmd.Flags().Changed("location") || cmd.Flags().Changed("region") {
+			return fmt.Errorf("organization location and region cannot be updated after creation")
 		}
 
-		if cmd.Flags().Changed("region") {
-			region, _ := cmd.Flags().GetString("region")
-			folderConfig.Region = region
-		}
-
-		// Build field mask
-		fieldMask := buildFieldMask(cmd, []string{"name", "location", "region"})
+		fieldMask := buildFieldMaskFromMap(cmd, map[string]string{
+			"name": "folder.organization_name",
+		})
 		if fieldMask == nil {
 			return fmt.Errorf("no fields to update - specify at least one flag to edit")
 		}
 
 		resp, err := client.OrganizationService.UpdateOrganization(cmd.Context(), connect.NewRequest(&libopsv1.UpdateOrganizationRequest{
-			Folder:     folderConfig,
-			UpdateMask: fieldMask,
+			OrganizationId: orgID,
+			Folder:         folderConfig,
+			UpdateMask:     fieldMask,
 		}))
 		if err != nil {
 			slog.Error("Failed to update organization", "id", orgID, "err", err)
@@ -154,6 +131,11 @@ var editProjectCmd = &cobra.Command{
 			projectConfig.MachineType = machineType
 		}
 
+		if cmd.Flags().Changed("disk-size-gb") {
+			diskSizeGB, _ := cmd.Flags().GetInt32("disk-size-gb")
+			projectConfig.DiskSizeGb = diskSizeGB
+		}
+
 		if cmd.Flags().Changed("create-branch-sites") {
 			createBranchSites, _ := cmd.Flags().GetBool("create-branch-sites")
 			projectConfig.CreateBranchSites = createBranchSites
@@ -166,6 +148,9 @@ var editProjectCmd = &cobra.Command{
 		}
 		if cmd.Flags().Changed("machine-type") {
 			fieldMaskPaths = append(fieldMaskPaths, "project.machine_type")
+		}
+		if cmd.Flags().Changed("disk-size-gb") {
+			fieldMaskPaths = append(fieldMaskPaths, "project.disk_size_gb")
 		}
 		if cmd.Flags().Changed("create-branch-sites") {
 			fieldMaskPaths = append(fieldMaskPaths, "project.create_branch_sites")
@@ -264,6 +249,21 @@ var editSiteCmd = &cobra.Command{
 			siteConfig.ApplicationType = v
 		}
 
+		if cmd.Flags().Changed("overlay-volumes") {
+			v, _ := cmd.Flags().GetStringArray("overlay-volumes")
+			siteConfig.OverlayVolumes = v
+		}
+
+		if cmd.Flags().Changed("os") {
+			v, _ := cmd.Flags().GetString("os")
+			siteConfig.Os = v
+		}
+
+		if cmd.Flags().Changed("is-production") {
+			v, _ := cmd.Flags().GetBool("is-production")
+			siteConfig.IsProduction = v
+		}
+
 		if cmd.Flags().Changed("up-cmd") {
 			v, _ := cmd.Flags().GetStringArray("up-cmd")
 			siteConfig.UpCmd = v
@@ -279,16 +279,28 @@ var editSiteCmd = &cobra.Command{
 			siteConfig.RolloutCmd = v
 		}
 
-		// Build field mask
-		fieldMask := buildFieldMask(cmd, []string{
-			"name", "github-repository", "github-ref", "compose-path", "compose-file",
-			"port", "application-type", "up-cmd", "init-cmd", "rollout-cmd",
+		for _, unsupported := range []string{"github-repository", "compose-path", "compose-file", "port", "application-type"} {
+			if cmd.Flags().Changed(unsupported) {
+				return fmt.Errorf("--%s cannot be updated by the organization site API; create a replacement site or use admin tooling", unsupported)
+			}
+		}
+
+		fieldMask := buildFieldMaskFromMap(cmd, map[string]string{
+			"name":            "site.site_name",
+			"github-ref":      "site.github_ref",
+			"up-cmd":          "site.up_cmd",
+			"init-cmd":        "site.init_cmd",
+			"rollout-cmd":     "site.rollout_cmd",
+			"overlay-volumes": "site.overlay_volumes",
+			"os":              "site.os",
+			"is-production":   "site.is_production",
 		})
 		if fieldMask == nil {
 			return fmt.Errorf("no fields to update - specify at least one flag to edit")
 		}
 
 		resp, err := client.SiteService.UpdateSite(cmd.Context(), connect.NewRequest(&libopsv1.UpdateSiteRequest{
+			SiteId:     siteID,
 			Site:       siteConfig,
 			UpdateMask: fieldMask,
 		}))
@@ -330,6 +342,7 @@ func init() {
 	// Project edit flags (region and zone cannot be updated after creation)
 	editProjectCmd.Flags().String("name", "", "Project name")
 	editProjectCmd.Flags().String("machine-type", "", "GCP machine type")
+	editProjectCmd.Flags().Int32("disk-size-gb", 0, "Disk size in GB")
 	editProjectCmd.Flags().Bool("create-branch-sites", false, "Auto-create sites for new branches")
 
 	// Site edit flags (same as create, but all optional)
@@ -343,4 +356,7 @@ func init() {
 	editSiteCmd.Flags().StringArray("up-cmd", []string{}, "Commands to start containers")
 	editSiteCmd.Flags().StringArray("init-cmd", []string{}, "Commands to run on initial setup")
 	editSiteCmd.Flags().StringArray("rollout-cmd", []string{}, "Commands to run during rollout")
+	editSiteCmd.Flags().StringArray("overlay-volumes", []string{}, "Overlay volume paths")
+	editSiteCmd.Flags().String("os", "", "Site OS image")
+	editSiteCmd.Flags().Bool("is-production", false, "Mark this site as production")
 }

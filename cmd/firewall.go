@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/resources"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/resources"
 	"github.com/spf13/cobra"
 )
 
@@ -218,14 +218,68 @@ var listFirewallCmd = &cobra.Command{
 			}
 		}
 
-		w.Flush()
+		return w.Flush()
+	},
+}
+
+var deleteFirewallCmd = &cobra.Command{
+	Use:   "firewall <rule-id>",
+	Short: "Delete a firewall rule",
+	Long:  "Delete a firewall rule for an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ruleID := args[0]
+		confirmed, err := confirmDeletion(cmd, "firewall rule", ruleID)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			fmt.Println("Deletion cancelled.")
+			return nil
+		}
+
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiBaseURL)
+		if err != nil {
+			return err
+		}
+
+		orgID, _ := cmd.Flags().GetString("organization-id")
+		projectID, _ := cmd.Flags().GetString("project-id")
+		siteID, _ := cmd.Flags().GetString("site-id")
+
+		if orgID != "" {
+			_, err = client.FirewallService.DeleteOrganizationFirewallRule(cmd.Context(), connect.NewRequest(&libopsv1.DeleteOrganizationFirewallRuleRequest{
+				OrganizationId: orgID,
+				RuleId:         ruleID,
+			}))
+		} else if projectID != "" {
+			_, err = client.ProjectFirewallService.DeleteProjectFirewallRule(cmd.Context(), connect.NewRequest(&libopsv1.DeleteProjectFirewallRuleRequest{
+				ProjectId: projectID,
+				RuleId:    ruleID,
+			}))
+		} else if siteID != "" {
+			_, err = client.SiteFirewallService.DeleteSiteFirewallRule(cmd.Context(), connect.NewRequest(&libopsv1.DeleteSiteFirewallRuleRequest{
+				SiteId: siteID,
+				RuleId: ruleID,
+			}))
+		} else {
+			return fmt.Errorf("must specify one of --organization-id, --project-id, or --site-id")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to delete firewall rule: %w", err)
+		}
+
+		fmt.Printf("Deleted firewall rule: %s\n", ruleID)
 		return nil
 	},
 }
 
-// Note: Firewall rules do not support update operations via the API
-// Note: Firewall rules deletion requires parent resource ID (organization/project/site)
-// These commands have been removed as they cannot be implemented with just the rule ID
+// Note: Firewall rules do not support update operations via the API.
 
 func init() {
 	// Add firewall subcommand to create command
@@ -247,4 +301,12 @@ func init() {
 	listFirewallCmd.Flags().String("project-id", "", "Filter by project ID")
 	listFirewallCmd.Flags().String("site-id", "", "Filter by site ID")
 	listFirewallCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
+
+	deleteCmd.AddCommand(deleteFirewallCmd)
+	deleteFirewallCmd.Flags().String("organization-id", "", "Organization ID")
+	deleteFirewallCmd.Flags().String("project-id", "", "Project ID")
+	deleteFirewallCmd.Flags().String("site-id", "", "Site ID")
+	deleteFirewallCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	deleteFirewallCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
+	deleteFirewallCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
 }

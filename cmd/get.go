@@ -6,8 +6,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )

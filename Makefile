@@ -1,4 +1,4 @@
-.PHONY: build deps lint test docker integration-test docs plugins install-plugins
+.PHONY: build deps lint test docker integration-test docs plugins install-plugins install
 
 BINARY_NAME=sitectl-libops
 
@@ -8,6 +8,9 @@ deps:
 
 build: deps
 	go build -o $(BINARY_NAME) .
+
+install: build
+	mv $(BINARY_NAME) /usr/local/bin
 
 lint:
 	go fmt ./...
@@ -22,4 +25,3 @@ lint:
 
 test: build
 	go test -v -race ./...
-

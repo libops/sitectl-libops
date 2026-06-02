@@ -4,20 +4,23 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/resources"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/resources"
 	"github.com/spf13/cobra"
 )
 
 var createSecretsCmd = &cobra.Command{
-	Use:   "secrets",
-	Short: "Create a secret",
-	Long:  "Create a secret for an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Use:     "secret",
+	Aliases: []string{"secrets"},
+	Short:   "Create a secret",
+	Long:    "Create a secret for an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -38,7 +41,7 @@ var createSecretsCmd = &cobra.Command{
 			return err
 		}
 
-		value, err := cmd.Flags().GetString("value")
+		value, err := secretValueFromFlags(cmd)
 		if err != nil {
 			return err
 		}
@@ -86,9 +89,10 @@ var createSecretsCmd = &cobra.Command{
 }
 
 var listSecretsCmd = &cobra.Command{
-	Use:   "secrets",
-	Short: "List secrets",
-	Long:  "List secrets. Optionally filter by --organization-id, --project-id, or --site-id. If no filter is specified, lists all secrets.",
+	Use:     "secrets",
+	Aliases: []string{"secret"},
+	Short:   "List secrets",
+	Long:    "List secrets. Optionally filter by --organization-id, --project-id, or --site-id. If no filter is specified, lists all secrets.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -202,15 +206,151 @@ var listSecretsCmd = &cobra.Command{
 			}
 		}
 
-		w.Flush()
+		return w.Flush()
+	},
+}
+
+var editSecretCmd = &cobra.Command{
+	Use:   "secret <secret-id>",
+	Short: "Update a secret value",
+	Long:  "Update a secret value for an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+		value, err := secretValueFromFlags(cmd)
+		if err != nil {
+			return err
+		}
+
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiBaseURL)
+		if err != nil {
+			return err
+		}
+
+		orgID, _ := cmd.Flags().GetString("organization-id")
+		projectID, _ := cmd.Flags().GetString("project-id")
+		siteID, _ := cmd.Flags().GetString("site-id")
+		secretID := args[0]
+		updateMask := &fieldmaskpb.FieldMask{Paths: []string{"value"}}
+
+		if orgID != "" {
+			resp, err := client.OrganizationSecretService.UpdateOrganizationSecret(cmd.Context(), connect.NewRequest(&libopsv1.UpdateOrganizationSecretRequest{
+				OrganizationId: orgID,
+				SecretId:       secretID,
+				Value:          &value,
+				UpdateMask:     updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update organization secret: %w", err)
+			}
+			fmt.Printf("Updated organization secret: %s (%s)\n", resp.Msg.Secret.SecretId, resp.Msg.Secret.Name)
+			return nil
+		}
+		if projectID != "" {
+			resp, err := client.ProjectSecretService.UpdateProjectSecret(cmd.Context(), connect.NewRequest(&libopsv1.UpdateProjectSecretRequest{
+				ProjectId:  projectID,
+				SecretId:   secretID,
+				Value:      &value,
+				UpdateMask: updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update project secret: %w", err)
+			}
+			fmt.Printf("Updated project secret: %s (%s)\n", resp.Msg.Secret.SecretId, resp.Msg.Secret.Name)
+			return nil
+		}
+		if siteID != "" {
+			resp, err := client.SiteSecretService.UpdateSiteSecret(cmd.Context(), connect.NewRequest(&libopsv1.UpdateSiteSecretRequest{
+				SiteId:     siteID,
+				SecretId:   secretID,
+				Value:      &value,
+				UpdateMask: updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update site secret: %w", err)
+			}
+			fmt.Printf("Updated site secret: %s (%s)\n", resp.Msg.Secret.SecretId, resp.Msg.Secret.Name)
+			return nil
+		}
+		return fmt.Errorf("must specify one of --organization-id, --project-id, or --site-id")
+	},
+}
+
+var deleteSecretCmd = &cobra.Command{
+	Use:   "secret <secret-id>",
+	Short: "Delete a secret",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		secretID := args[0]
+		confirmed, err := confirmDeletion(cmd, "secret", secretID)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			fmt.Println("Deletion cancelled.")
+			return nil
+		}
+
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiBaseURL)
+		if err != nil {
+			return err
+		}
+
+		orgID, _ := cmd.Flags().GetString("organization-id")
+		projectID, _ := cmd.Flags().GetString("project-id")
+		siteID, _ := cmd.Flags().GetString("site-id")
+
+		if orgID != "" {
+			_, err = client.OrganizationSecretService.DeleteOrganizationSecret(cmd.Context(), connect.NewRequest(&libopsv1.DeleteOrganizationSecretRequest{
+				OrganizationId: orgID,
+				SecretId:       secretID,
+			}))
+		} else if projectID != "" {
+			_, err = client.ProjectSecretService.DeleteProjectSecret(cmd.Context(), connect.NewRequest(&libopsv1.DeleteProjectSecretRequest{
+				ProjectId: projectID,
+				SecretId:  secretID,
+			}))
+		} else if siteID != "" {
+			_, err = client.SiteSecretService.DeleteSiteSecret(cmd.Context(), connect.NewRequest(&libopsv1.DeleteSiteSecretRequest{
+				SiteId:   siteID,
+				SecretId: secretID,
+			}))
+		} else {
+			return fmt.Errorf("must specify one of --organization-id, --project-id, or --site-id")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to delete secret: %w", err)
+		}
+		fmt.Printf("Deleted secret: %s\n", secretID)
 		return nil
 	},
 }
 
-// Note: Secret update/delete requires both the parent resource ID (organization/project/site)
-// and the secret ID. These commands have been removed as they cannot be implemented with
-// just the secret ID. Use the secret-id shown in list output with the appropriate
-// --organization-id, --project-id, or --site-id flag when creating secrets.
+func secretValueFromFlags(cmd *cobra.Command) (string, error) {
+	value, _ := cmd.Flags().GetString("value")
+	valueFile, _ := cmd.Flags().GetString("value-file")
+	if strings.TrimSpace(value) != "" && strings.TrimSpace(valueFile) != "" {
+		return "", fmt.Errorf("specify only one of --value or --value-file")
+	}
+	if strings.TrimSpace(valueFile) != "" {
+		data, err := os.ReadFile(valueFile) // #nosec G304 -- user explicitly selects the secret value file.
+		if err != nil {
+			return "", fmt.Errorf("read value file: %w", err)
+		}
+		value = strings.TrimRight(string(data), "\r\n")
+	}
+	if value == "" {
+		return "", fmt.Errorf("must specify --value or --value-file")
+	}
+	return value, nil
+}
 
 func init() {
 	// Add secrets subcommand to create command
@@ -219,9 +359,9 @@ func init() {
 	createSecretsCmd.Flags().String("project-id", "", "Project ID")
 	createSecretsCmd.Flags().String("site-id", "", "Site ID")
 	createSecretsCmd.Flags().String("name", "", "Secret name (required)")
-	createSecretsCmd.Flags().String("value", "", "Secret value (required)")
+	createSecretsCmd.Flags().String("value", "", "Secret value")
+	createSecretsCmd.Flags().String("value-file", "", "Path to a file containing the secret value")
 	_ = createSecretsCmd.MarkFlagRequired("name")
-	_ = createSecretsCmd.MarkFlagRequired("value")
 	createSecretsCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
 	createSecretsCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
 
@@ -231,4 +371,21 @@ func init() {
 	listSecretsCmd.Flags().String("project-id", "", "Filter by project ID")
 	listSecretsCmd.Flags().String("site-id", "", "Filter by site ID")
 	listSecretsCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
+
+	editCmd.AddCommand(editSecretCmd)
+	editSecretCmd.Flags().String("organization-id", "", "Organization ID")
+	editSecretCmd.Flags().String("project-id", "", "Project ID")
+	editSecretCmd.Flags().String("site-id", "", "Site ID")
+	editSecretCmd.Flags().String("value", "", "Secret value")
+	editSecretCmd.Flags().String("value-file", "", "Path to a file containing the secret value")
+	editSecretCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
+	editSecretCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
+
+	deleteCmd.AddCommand(deleteSecretCmd)
+	deleteSecretCmd.Flags().String("organization-id", "", "Organization ID")
+	deleteSecretCmd.Flags().String("project-id", "", "Project ID")
+	deleteSecretCmd.Flags().String("site-id", "", "Site ID")
+	deleteSecretCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	deleteSecretCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
+	deleteSecretCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
 }

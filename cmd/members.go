@@ -7,17 +7,19 @@ import (
 	"text/tabwriter"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/resources"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/resources"
 	"github.com/spf13/cobra"
 )
 
 var createMembersCmd = &cobra.Command{
-	Use:   "members",
-	Short: "Add a member",
-	Long:  "Add a member to an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Use:     "members",
+	Aliases: []string{"member"},
+	Short:   "Add a member",
+	Long:    "Add a member to an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -89,9 +91,10 @@ var createMembersCmd = &cobra.Command{
 }
 
 var listMembersCmd = &cobra.Command{
-	Use:   "members",
-	Short: "List members",
-	Long:  "List members. Optionally filter by --organization-id, --project-id, or --site-id. If no filter is specified, lists all members.",
+	Use:     "members",
+	Aliases: []string{"member"},
+	Short:   "List members",
+	Long:    "List members. Optionally filter by --organization-id, --project-id, or --site-id. If no filter is specified, lists all members.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiBaseURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
@@ -205,15 +208,137 @@ var listMembersCmd = &cobra.Command{
 			}
 		}
 
-		w.Flush()
-		return nil
+		return w.Flush()
 	},
 }
 
-// Note: Member update/delete requires both the parent resource ID (organization/project/site)
-// and the account ID. These commands have been removed as they cannot be implemented with
-// just the member ID. Use the account-id shown in list output with the appropriate
-// --organization-id, --project-id, or --site-id flag when creating members.
+var editMemberCmd = &cobra.Command{
+	Use:   "member <account-id>",
+	Short: "Update a member role",
+	Long:  "Update a member role for an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+		role, err := cmd.Flags().GetString("role")
+		if err != nil {
+			return err
+		}
+		if role == "" {
+			return fmt.Errorf("--role is required")
+		}
+
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiBaseURL)
+		if err != nil {
+			return err
+		}
+
+		accountID := args[0]
+		orgID, _ := cmd.Flags().GetString("organization-id")
+		projectID, _ := cmd.Flags().GetString("project-id")
+		siteID, _ := cmd.Flags().GetString("site-id")
+		updateMask := &fieldmaskpb.FieldMask{Paths: []string{"role"}}
+
+		if orgID != "" {
+			resp, err := client.MemberService.UpdateOrganizationMember(cmd.Context(), connect.NewRequest(&libopsv1.UpdateOrganizationMemberRequest{
+				OrganizationId: orgID,
+				AccountId:      accountID,
+				Role:           role,
+				UpdateMask:     updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update organization member: %w", err)
+			}
+			fmt.Printf("Updated organization member: %s (%s)\n", resp.Msg.Member.AccountId, resp.Msg.Member.Role)
+			return nil
+		}
+		if projectID != "" {
+			resp, err := client.ProjectMemberService.UpdateProjectMember(cmd.Context(), connect.NewRequest(&libopsv1.UpdateProjectMemberRequest{
+				ProjectId:  projectID,
+				AccountId:  accountID,
+				Role:       role,
+				UpdateMask: updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update project member: %w", err)
+			}
+			fmt.Printf("Updated project member: %s (%s)\n", resp.Msg.Member.AccountId, resp.Msg.Member.Role)
+			return nil
+		}
+		if siteID != "" {
+			resp, err := client.SiteMemberService.UpdateSiteMember(cmd.Context(), connect.NewRequest(&libopsv1.UpdateSiteMemberRequest{
+				SiteId:     siteID,
+				AccountId:  accountID,
+				Role:       role,
+				UpdateMask: updateMask,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to update site member: %w", err)
+			}
+			fmt.Printf("Updated site member: %s (%s)\n", resp.Msg.Member.AccountId, resp.Msg.Member.Role)
+			return nil
+		}
+		return fmt.Errorf("must specify one of --organization-id, --project-id, or --site-id")
+	},
+}
+
+var deleteMemberCmd = &cobra.Command{
+	Use:   "member <account-id>",
+	Short: "Remove a member",
+	Long:  "Remove a member from an organization, project, or site. Specify one of --organization-id, --project-id, or --site-id.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		accountID := args[0]
+		confirmed, err := confirmDeletion(cmd, "member", accountID)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			fmt.Println("Deletion cancelled.")
+			return nil
+		}
+
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiBaseURL)
+		if err != nil {
+			return err
+		}
+
+		orgID, _ := cmd.Flags().GetString("organization-id")
+		projectID, _ := cmd.Flags().GetString("project-id")
+		siteID, _ := cmd.Flags().GetString("site-id")
+
+		if orgID != "" {
+			_, err = client.MemberService.DeleteOrganizationMember(cmd.Context(), connect.NewRequest(&libopsv1.DeleteOrganizationMemberRequest{
+				OrganizationId: orgID,
+				AccountId:      accountID,
+			}))
+		} else if projectID != "" {
+			_, err = client.ProjectMemberService.DeleteProjectMember(cmd.Context(), connect.NewRequest(&libopsv1.DeleteProjectMemberRequest{
+				ProjectId: projectID,
+				AccountId: accountID,
+			}))
+		} else if siteID != "" {
+			_, err = client.SiteMemberService.DeleteSiteMember(cmd.Context(), connect.NewRequest(&libopsv1.DeleteSiteMemberRequest{
+				SiteId:    siteID,
+				AccountId: accountID,
+			}))
+		} else {
+			return fmt.Errorf("must specify one of --organization-id, --project-id, or --site-id")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to remove member: %w", err)
+		}
+
+		fmt.Printf("Removed member: %s\n", accountID)
+		return nil
+	},
+}
 
 func init() {
 	// Add members subcommand to create command
@@ -233,4 +358,21 @@ func init() {
 	listMembersCmd.Flags().String("project-id", "", "Filter by project ID")
 	listMembersCmd.Flags().String("site-id", "", "Filter by site ID")
 	listMembersCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
+
+	editCmd.AddCommand(editMemberCmd)
+	editMemberCmd.Flags().String("organization-id", "", "Organization ID")
+	editMemberCmd.Flags().String("project-id", "", "Project ID")
+	editMemberCmd.Flags().String("site-id", "", "Site ID")
+	editMemberCmd.Flags().String("role", "", "Role (owner, developer, read)")
+	_ = editMemberCmd.MarkFlagRequired("role")
+	editMemberCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
+	editMemberCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
+
+	deleteCmd.AddCommand(deleteMemberCmd)
+	deleteMemberCmd.Flags().String("organization-id", "", "Organization ID")
+	deleteMemberCmd.Flags().String("project-id", "", "Project ID")
+	deleteMemberCmd.Flags().String("site-id", "", "Site ID")
+	deleteMemberCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
+	deleteMemberCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
+	deleteMemberCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
 }

@@ -10,6 +10,7 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.AddCommand(loginCmd)
 	sdk.AddCommand(logoutCmd)
 	sdk.AddCommand(whoamiCmd)
+	sdk.AddCommand(accountCmd)
 
 	// Resource management commands (CRUD)
 	// Subcommands are automatically registered via init() functions
@@ -20,6 +21,10 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.AddCommand(deleteCmd)
 
 	// Other commands
-	sdk.AddCommand(composeCmd)
-	sdk.AddCommand(portForwardCmd)
+	sdk.AddCommand(deployCmd)
+	sdk.AddCommand(taskCmd)
+	sdk.AddCommand(pingCmd)
+	sdk.AddCommand(sshCmd)
+	sdk.AddCommand(checkoutCmd)
+	sdk.AddCommand(contextCmd)
 }

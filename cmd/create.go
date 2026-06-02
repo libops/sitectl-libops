@@ -6,10 +6,10 @@ import (
 
 	"connectrpc.com/connect"
 
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/api/proto/libops/v1/common"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/resources"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/proto/libops/v1/common"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/resources"
 	"github.com/spf13/cobra"
 )
 
@@ -113,6 +113,11 @@ var createProjectCmd = &cobra.Command{
 			return err
 		}
 
+		diskSizeGB, err := cmd.Flags().GetInt32("disk-size-gb")
+		if err != nil {
+			return err
+		}
+
 		createBranchSites, err := cmd.Flags().GetBool("create-branch-sites")
 		if err != nil {
 			return err
@@ -125,6 +130,7 @@ var createProjectCmd = &cobra.Command{
 				Region:            region,
 				Zone:              zone,
 				MachineType:       machineType,
+				DiskSizeGb:        diskSizeGB,
 				CreateBranchSites: createBranchSites,
 			},
 		}))
@@ -276,6 +282,7 @@ func init() {
 	createProjectCmd.Flags().String("region", "us-central1", "GCP region")
 	createProjectCmd.Flags().String("zone", "us-central1-f", "GCP zone")
 	createProjectCmd.Flags().String("machine-type", "e2-standard-2", "GCP machine type")
+	createProjectCmd.Flags().Int32("disk-size-gb", 20, "Disk size in GB")
 	createProjectCmd.Flags().Bool("create-branch-sites", false, "Auto-create sites for new branches")
 	_ = createProjectCmd.MarkFlagRequired("organization-id")
 	_ = createProjectCmd.MarkFlagRequired("name")
@@ -285,14 +292,15 @@ func init() {
 	createSiteCmd.Flags().String("name", "", "Site name (required)")
 	createSiteCmd.Flags().String("github-repository", "", "GitHub repository URL (required)")
 	createSiteCmd.Flags().String("github-ref", "", "GitHub reference (e.g., heads/main, tags/v1.0)")
-	createSiteCmd.Flags().String("compose-path", "", "Path to docker-compose directory")
+	createSiteCmd.Flags().String("compose-path", "/mnt/disks/data/compose", "Path to docker-compose directory")
 	createSiteCmd.Flags().String("compose-file", "docker-compose.yml", "Docker compose file name")
 	createSiteCmd.Flags().Int32("port", 80, "Port the application listens on")
-	createSiteCmd.Flags().String("application-type", "generic", "Type of application")
+	createSiteCmd.Flags().String("application-type", "", "Type of application (drupal, ojs, wordpress, omeka-classic, omeka-s, archivesspace, islandora)")
 	createSiteCmd.Flags().StringArray("up-cmd", []string{}, "Commands to start containers")
 	createSiteCmd.Flags().StringArray("init-cmd", []string{}, "Commands to run on initial setup")
 	createSiteCmd.Flags().StringArray("rollout-cmd", []string{}, "Commands to run during rollout")
 	_ = createSiteCmd.MarkFlagRequired("project-id")
 	_ = createSiteCmd.MarkFlagRequired("name")
 	_ = createSiteCmd.MarkFlagRequired("github-repository")
+	_ = createSiteCmd.MarkFlagRequired("application-type")
 }

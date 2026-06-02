@@ -5,14 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
-	libopsv1 "github.com/libops/api/proto/libops/v1"
-	"github.com/libops/sitectl/pkg/api"
-	"github.com/libops/sitectl/pkg/auth"
+	libopsv1 "github.com/libops/proto/libops/v1"
+	"github.com/libops/sitectl-libops/pkg/api"
+	"github.com/libops/sitectl-libops/pkg/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -71,7 +70,10 @@ Examples:
 		fmt.Printf("Token expires: %s\n", expiryTime.Format(time.RFC1123))
 
 		// Check if API key already exists
-		keyPath := filepath.Join(os.Getenv("HOME"), ".sitectl", "key")
+		keyPath, err := auth.APIKeyFilePath()
+		if err != nil {
+			return fmt.Errorf("failed to resolve API key path: %w", err)
+		}
 		if _, err := os.Stat(keyPath); err == nil {
 			fmt.Printf("\nAPI key already exists at: %s\n", keyPath)
 			return nil
@@ -114,7 +116,8 @@ Examples:
 		}
 
 		// Save API key to ~/.sitectl/key
-		if err := saveAPIKey(resp.Msg.ApiKey); err != nil {
+		keyPath, err = auth.SaveAPIKey(resp.Msg.ApiKey)
+		if err != nil {
 			return fmt.Errorf("failed to save API key: %w", err)
 		}
 
@@ -126,26 +129,6 @@ Examples:
 
 		return nil
 	},
-}
-
-// saveAPIKey saves the API key to ~/.sitectl/key with chmod 600
-func saveAPIKey(apiKey string) error {
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		return fmt.Errorf("HOME environment variable not set")
-	}
-
-	sitectlDir := filepath.Join(homeDir, ".sitectl")
-	if err := os.MkdirAll(sitectlDir, 0700); err != nil {
-		return fmt.Errorf("failed to create .sitectl directory: %w", err)
-	}
-
-	keyPath := filepath.Join(sitectlDir, "key")
-	if err := os.WriteFile(keyPath, []byte(apiKey), 0600); err != nil {
-		return fmt.Errorf("failed to write key file: %w", err)
-	}
-
-	return nil
 }
 
 var logoutCmd = &cobra.Command{
@@ -162,7 +145,10 @@ You will need to run 'sitectl login' again to authenticate.`,
 			return fmt.Errorf("failed to get token path: %w", err)
 		}
 
-		keyPath := filepath.Join(os.Getenv("HOME"), ".sitectl", "key")
+		keyPath, err := auth.APIKeyFilePath()
+		if err != nil {
+			return fmt.Errorf("failed to resolve API key path: %w", err)
+		}
 
 		removedAny := false
 
@@ -177,7 +163,7 @@ You will need to run 'sitectl login' again to authenticate.`,
 
 		// Remove API key file
 		if _, err := os.Stat(keyPath); err == nil {
-			if err := os.Remove(keyPath); err != nil {
+			if err := auth.ClearAPIKey(); err != nil {
 				return fmt.Errorf("failed to remove API key: %w", err)
 			}
 			fmt.Printf("Removed API key from: %s\n", keyPath)
@@ -198,38 +184,97 @@ You will need to run 'sitectl login' again to authenticate.`,
 var whoamiCmd = &cobra.Command{
 	Use:   "whoami",
 	Short: "Display current authentication status",
-	Long: `Display current authentication status and token information.
+	Long: `Display current authentication and development access status.
 
 This command shows information about your current authentication session,
-including token expiry and whether you need to re-authenticate.`,
+including token expiry, API key availability, account details, GitHub username,
+and whether LibOps has an SSH key for your account.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		tokens, err := auth.LoadTokens()
+		apiURL, err := cmd.Flags().GetString("api-url")
 		if err != nil {
-			fmt.Println("Not authenticated")
-			fmt.Println("Run 'sitectl login' to authenticate")
+			return err
+		}
+
+		tokens, err := auth.LoadTokens()
+		apiKey, apiKeyErr := auth.LoadAPIKey()
+		hasAPIKey := apiKeyErr == nil && strings.TrimSpace(apiKey) != ""
+		if err != nil {
+			tokens = nil
+		}
+		if tokens == nil && !hasAPIKey {
+			fmt.Println("Authentication Status: not authenticated")
+			fmt.Println("Run 'sitectl login' to authenticate.")
 			return nil
 		}
 
-		fmt.Println("Authentication Status: ✓ Authenticated")
-		fmt.Printf("Token Type: %s\n", tokens.TokenType)
-
-		expiryTime := time.Unix(tokens.ExpiryDate, 0)
-		fmt.Printf("Token Expires: %s\n", expiryTime.Format(time.RFC1123))
-
-		if tokens.IsTokenExpired() {
-			fmt.Println("\n⚠ Token has expired")
-			fmt.Println("Run 'sitectl login' to re-authenticate")
+		fmt.Println("Authentication Status: authenticated")
+		if hasAPIKey {
+			keyPath, _ := auth.APIKeyFilePath()
+			fmt.Printf("API Key: configured (%s)\n", keyPath)
 		} else {
-			timeUntilExpiry := time.Until(expiryTime)
-			fmt.Printf("Time Until Expiry: %s\n", timeUntilExpiry.Round(time.Minute))
+			fmt.Println("API Key: not configured")
 		}
 
-		if tokens.Scope != "" {
-			fmt.Printf("Scopes: %s\n", tokens.Scope)
+		if tokens != nil {
+			fmt.Printf("Token Type: %s\n", tokens.TokenType)
+
+			expiryTime := time.Unix(tokens.ExpiryDate, 0)
+			fmt.Printf("Token Expires: %s\n", expiryTime.Format(time.RFC1123))
+
+			if tokens.IsTokenExpired() {
+				fmt.Println("Token Status: expired")
+				fmt.Println("Run 'sitectl login' to re-authenticate.")
+			} else {
+				timeUntilExpiry := time.Until(expiryTime)
+				fmt.Printf("Time Until Expiry: %s\n", timeUntilExpiry.Round(time.Minute))
+			}
+
+			if tokens.Scope != "" {
+				fmt.Printf("Scopes: %s\n", tokens.Scope)
+			}
+
+			tokenPath, _ := auth.TokenFilePath()
+			fmt.Printf("OAuth Credentials: %s\n", tokenPath)
+		} else {
+			fmt.Println("OAuth Credentials: not configured")
 		}
 
-		tokenPath, _ := auth.TokenFilePath()
-		fmt.Printf("\nCredentials stored at: %s\n", tokenPath)
+		account, err := api.GetCurrentAccount(cmd.Context(), apiURL)
+		if err != nil {
+			fmt.Printf("\nAccount: unavailable (%v)\n", err)
+			return nil
+		}
+
+		fmt.Printf("\nAccount ID: %s\n", account.ID)
+		fmt.Printf("Email: %s\n", account.Email)
+		if account.Name != "" {
+			fmt.Printf("Name: %s\n", account.Name)
+		}
+		if account.GithubUsername != "" {
+			fmt.Printf("GitHub Username: %s\n", account.GithubUsername)
+		} else {
+			fmt.Println("GitHub Username: missing")
+			fmt.Println("Development Config: run 'sitectl account update --github-username <username>'.")
+		}
+
+		client, err := api.NewLibopsAPIClient(cmd.Context(), apiURL)
+		if err != nil {
+			fmt.Printf("LibOps SSH Keys: unavailable (%v)\n", err)
+			return nil
+		}
+		keysResp, err := client.SshKeyService.ListSshKeys(cmd.Context(), connect.NewRequest(&libopsv1.ListSshKeysRequest{}))
+		if err != nil {
+			fmt.Printf("LibOps SSH Keys: unavailable (%v)\n", err)
+			return nil
+		}
+		if len(keysResp.Msg.SshKeys) == 0 {
+			fmt.Println("LibOps SSH Keys: none")
+			fmt.Println("SSH Access: add a public key with 'sitectl create ssh-key --public-key-file ~/.ssh/id_ed25519.pub'.")
+		} else {
+			fmt.Printf("LibOps SSH Keys: %d configured\n", len(keysResp.Msg.SshKeys))
+		}
+
+		fmt.Println("GitHub Checkout: ensure the same SSH public key is also added to GitHub.")
 
 		return nil
 	},
