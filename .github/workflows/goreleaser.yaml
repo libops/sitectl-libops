@@ -1,0 +1,19 @@
+name: goreleaser
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    uses: libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@main
+    permissions:
+      contents: write
+    secrets: inherit
+    with:
+      go-version: ">=1.26.3"
