@@ -22,6 +22,11 @@ type taskAPIClients struct {
 	tasks     libopsv1connect.TaskServiceClient
 }
 
+var supportedTaskAgentModels = map[string]struct{}{
+	"glm-5.2:cloud": {},
+	"kimi-k2.6":     {},
+}
+
 var taskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Create and manage LibOps Task Agent tasks",
@@ -46,8 +51,16 @@ var taskCreateCmd = &cobra.Command{
 		projectID, _ := cmd.Flags().GetString("project-id")
 		siteID, _ := cmd.Flags().GetString("site-id")
 		agentModel, _ := cmd.Flags().GetString("agent-model")
-		if strings.TrimSpace(agentModel) != "" && strings.TrimSpace(agentModel) != "kimi-k2.6" {
-			return fmt.Errorf("unsupported agent model %q; Task Agent currently supports only kimi-k2.6", agentModel)
+		agentModel = strings.TrimSpace(agentModel)
+		if agentModel != "" {
+			if _, ok := supportedTaskAgentModels[agentModel]; !ok {
+				return fmt.Errorf("unsupported agent model %q; Task Agent supports glm-5.2:cloud, kimi-k2.6", agentModel)
+			}
+		}
+		harnessRaw, _ := cmd.Flags().GetString("harness")
+		harness, err := taskHarnessFromString(harnessRaw)
+		if err != nil {
+			return err
 		}
 		noWait, _ := cmd.Flags().GetBool("no-wait")
 		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
@@ -59,6 +72,7 @@ var taskCreateCmd = &cobra.Command{
 			SiteId:         siteID,
 			Message:        message,
 			AgentModel:     agentModel,
+			Harness:        harness,
 			Metadata: map[string]string{
 				"conversation_provider":        "cli",
 				"conversation_response_target": "cli_poll",
@@ -266,7 +280,8 @@ func init() {
 
 	taskCreateCmd.Flags().String("project-id", "", "Project ID")
 	taskCreateCmd.Flags().String("site-id", "", "Site ID")
-	taskCreateCmd.Flags().String("agent-model", "kimi-k2.6", "Coding agent model (currently only kimi-k2.6)")
+	taskCreateCmd.Flags().String("agent-model", "glm-5.2:cloud", "Coding agent model (glm-5.2:cloud, kimi-k2.6)")
+	taskCreateCmd.Flags().String("harness", "codex", "Coding harness (codex, claude, pi, opencode, gemini)")
 	taskCreateCmd.Flags().Bool("no-wait", false, "Return after queueing the task")
 	taskCreateCmd.Flags().Duration("poll-interval", 3*time.Second, "Task polling interval while attached")
 	taskAttachCmd.Flags().Duration("poll-interval", 3*time.Second, "Task polling interval while attached")
@@ -286,6 +301,23 @@ func newTaskAPIClients(ctx context.Context, apiBaseURL string) (*taskAPIClients,
 		assistant: libopsv1connect.NewAssistantServiceClient(httpClient, apiBaseURL),
 		tasks:     libopsv1connect.NewTaskServiceClient(httpClient, apiBaseURL),
 	}, nil
+}
+
+func taskHarnessFromString(raw string) (libopsv1.TaskHarness, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "codex":
+		return libopsv1.TaskHarness_TASK_HARNESS_CODEX, nil
+	case "claude":
+		return libopsv1.TaskHarness_TASK_HARNESS_CLAUDE, nil
+	case "pi":
+		return libopsv1.TaskHarness_TASK_HARNESS_PI, nil
+	case "opencode":
+		return libopsv1.TaskHarness_TASK_HARNESS_OPENCODE, nil
+	case "gemini":
+		return libopsv1.TaskHarness_TASK_HARNESS_GEMINI, nil
+	default:
+		return libopsv1.TaskHarness_TASK_HARNESS_UNSPECIFIED, fmt.Errorf("unsupported harness %q; Task Agent supports codex, claude, pi, opencode, gemini", raw)
+	}
 }
 
 func singleLine(value string) string {

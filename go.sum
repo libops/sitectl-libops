@@ -92,6 +92,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/libops/proto v0.1.0 h1:++DPeym8SuU9mml77tS/wzwomjxVY6K3fHGXspYsidQ=
 github.com/libops/proto v0.1.0/go.mod h1:/nta9mR0J4IcFQNGy7gLF/rij74yt/Q3jdS6yJ6WNa0=
+github.com/libops/proto v0.3.1 h1:jsYiTkulvtsJLl0RNSnh5L/aXOJugE5hQnn5pf0x8JE=
+github.com/libops/proto v0.3.1/go.mod h1:u2oI+B7U1jozjzEw5g0giOXJxtU9LFUP0UEisbqQTYo=
 github.com/libops/sitectl v0.20.0 h1:XpZMYP3hQGPG1M1FaVt4080oc0jHzc0oM6lnc2qLzh0=
 github.com/libops/sitectl v0.20.0/go.mod h1:RIZX68uIdbuFBT67lH0TIdcqdliGeBvunfeLKD7W2Yg=
 github.com/lucasb-eyer/go-colorful v1.4.0 h1:UtrWVfLdarDgc44HcS7pYloGHJUjHV/4FwW4TvVgFr4=

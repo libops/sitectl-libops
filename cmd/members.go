@@ -35,7 +35,7 @@ var createMembersCmd = &cobra.Command{
 		projectID, _ := cmd.Flags().GetString("project-id")
 		siteID, _ := cmd.Flags().GetString("site-id")
 
-		accountID, err := cmd.Flags().GetString("account-id")
+		accountEmail, err := cmd.Flags().GetString("account-id")
 		if err != nil {
 			return err
 		}
@@ -49,7 +49,7 @@ var createMembersCmd = &cobra.Command{
 		if orgID != "" {
 			resp, err := client.MemberService.CreateOrganizationMember(cmd.Context(), connect.NewRequest(&libopsv1.CreateOrganizationMemberRequest{
 				OrganizationId: orgID,
-				AccountId:      accountID,
+				Email:          accountEmail,
 				Role:           role,
 			}))
 			if err != nil {
@@ -61,7 +61,7 @@ var createMembersCmd = &cobra.Command{
 		} else if projectID != "" {
 			resp, err := client.ProjectMemberService.CreateProjectMember(cmd.Context(), connect.NewRequest(&libopsv1.CreateProjectMemberRequest{
 				ProjectId: projectID,
-				AccountId: accountID,
+				Email:     accountEmail,
 				Role:      role,
 			}))
 			if err != nil {
@@ -72,9 +72,9 @@ var createMembersCmd = &cobra.Command{
 			fmt.Printf("  Role: %s\n", resp.Msg.Member.Role)
 		} else if siteID != "" {
 			resp, err := client.SiteMemberService.CreateSiteMember(cmd.Context(), connect.NewRequest(&libopsv1.CreateSiteMemberRequest{
-				SiteId:    siteID,
-				AccountId: accountID,
-				Role:      role,
+				SiteId: siteID,
+				Email:  accountEmail,
+				Role:   role,
 			}))
 			if err != nil {
 				return fmt.Errorf("failed to create site member: %w", err)
@@ -346,7 +346,7 @@ func init() {
 	createMembersCmd.Flags().String("organization-id", "", "Organization ID")
 	createMembersCmd.Flags().String("project-id", "", "Project ID")
 	createMembersCmd.Flags().String("site-id", "", "Site ID")
-	createMembersCmd.Flags().String("account-id", "", "Account ID to add (required)")
+	createMembersCmd.Flags().String("account-id", "", "Account email to add (required)")
 	createMembersCmd.Flags().String("role", "read", "Role (owner, developer, read)")
 	_ = createMembersCmd.MarkFlagRequired("account-id")
 	createMembersCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
