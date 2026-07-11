@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   goreleaser:
-    uses: libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@main
+    uses: libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@6f39b1c35f31c258f34af155dd1b9c2046238558 # main
     permissions:
       contents: write
     secrets: inherit
