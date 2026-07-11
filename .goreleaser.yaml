@@ -1,7 +1,7 @@
 version: 2
 before:
   hooks:
-    - ./scripts/check-sitectl-core-version.sh v0.37.0
+    - ./scripts/check-sitectl-core-version.sh v0.38.0
     - go mod tidy
 builds:
   - binary: sitectl-libops
@@ -71,10 +71,10 @@ nfpms:
     overrides:
       deb:
         dependencies:
-          - sitectl (>= 0.37.0)
+          - sitectl (>= 0.38.0)
       rpm:
         dependencies:
-          - sitectl >= 0.37.0
+          - sitectl >= 0.38.0
       apk:
         dependencies:
-          - sitectl>=0.37.0
+          - sitectl>=0.38.0
