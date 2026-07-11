@@ -1,11 +1,14 @@
 version: 2
 before:
   hooks:
+    - ./scripts/check-sitectl-core-version.sh v0.37.0
     - go mod tidy
 builds:
   - binary: sitectl-libops
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
     goos:
       - linux
       - windows
@@ -46,5 +49,32 @@ brews:
       owner: libops
       name: homebrew
     dependencies:
-      - name: "libops/tap/sitectl"
-
+      - name: "libops/homebrew/sitectl"
+nfpms:
+  - id: sitectl-libops
+    package_name: sitectl-libops
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: libops
+    homepage: "https://github.com/libops/sitectl-libops"
+    description: "A sitectl plugin for LibOps platform operations"
+    maintainer: "Joe Corall <joe@libops.io>"
+    license: "MIT"
+    formats:
+      - apk
+      - deb
+      - rpm
+    mtime: "{{ .CommitDate }}"
+    builds:
+      - sitectl-libops
+    dependencies:
+      - sitectl
+    overrides:
+      deb:
+        dependencies:
+          - sitectl (>= 0.37.0)
+      rpm:
+        dependencies:
+          - sitectl >= 0.37.0
+      apk:
+        dependencies:
+          - sitectl>=0.37.0

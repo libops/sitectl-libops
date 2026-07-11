@@ -1,17 +1,25 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/libops/sitectl-libops/cmd"
 	"github.com/libops/sitectl/pkg/plugin"
 )
 
 const defaultAPIURL = "https://api.libops.io"
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	// Create plugin SDK with metadata
 	sdk := plugin.NewSDK(plugin.Metadata{
 		Name:        "libops",
-		Version:     "1.0.0",
+		Version:     fmt.Sprintf("%s (Built on %s from Git SHA %s)", version, date, commit),
 		Description: "Interact with the Libops API",
 		Author:      "Libops Team",
 	})

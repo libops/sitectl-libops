@@ -8,12 +8,40 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
+  lint-test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.26.x"
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          install-only: true
+
+      - name: lint
+        run: make lint
+
+      - name: unit test
+        run: make test
+
   goreleaser:
-    uses: libops/terraform-linux-packages/.github/workflows/reusable-goreleaser.yaml@main
+    needs: lint-test
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@e366f7422565ea5ee71c0c626b740e03f2e2ffcd # main
     permissions:
       contents: write
+      id-token: write
     secrets: inherit
     with:
-      go-version: ">=1.26.3"
+      go-version: "1.26.x"
+      package-name: sitectl-libops
