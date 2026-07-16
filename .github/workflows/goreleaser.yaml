@@ -2,6 +2,20 @@ name: goreleaser
 
 on:
   workflow_dispatch:
+    inputs:
+      release-mode:
+        description: Full release or recovery mode; full recovery requires an existing empty release
+        required: true
+        type: choice
+        default: packages-only
+        options:
+          - packages-only
+          - homebrew-only
+          - full
+      release-version:
+        description: Exact existing vMAJOR.MINOR.PATCH tag for recovery
+        required: false
+        type: string
   push:
     tags:
       - "*"
@@ -17,11 +31,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.release-version || github.ref }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x"
+          go-version: "1.26.5"
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
@@ -37,11 +54,14 @@ jobs:
 
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@69fc4b92079cd51606e1d4757031c6e9b645bb5a # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@e1e30b58c9c566f72b22f03e637cd5218d635727 # main
     permissions:
       contents: write
       id-token: write
     secrets: inherit
     with:
-      go-version: "1.26.x"
+      go-version: "1.26.5"
+      release-mode: ${{ github.ref_type == 'tag' && 'full' || inputs.release-mode }}
+      release-version: ${{ inputs.release-version }}
       package-name: sitectl-libops
+      sitectl-ref: 65cfde137a58ba14aaa9a1512d88b943888872f3
