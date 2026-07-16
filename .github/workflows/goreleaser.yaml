@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release-mode:
-        description: Recovery mode; full is only valid from a new tag ref
+        description: Full release or recovery mode; full recovery requires an existing empty release
         required: true
         type: choice
         default: packages-only
@@ -13,7 +13,7 @@ on:
           - homebrew-only
           - full
       release-version:
-        description: Existing vMAJOR.MINOR.PATCH tag for a recovery mode
+        description: Exact existing vMAJOR.MINOR.PATCH tag for recovery
         required: false
         type: string
   push:
@@ -54,13 +54,14 @@ jobs:
 
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@39f81174b7b899f66aee31035308e1d9b1f3e165 # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@e1e30b58c9c566f72b22f03e637cd5218d635727 # main
     permissions:
       contents: write
       id-token: write
     secrets: inherit
     with:
       go-version: "1.26.5"
-      release-mode: ${{ inputs.release-mode || 'full' }}
+      release-mode: ${{ github.ref_type == 'tag' && 'full' || inputs.release-mode }}
       release-version: ${{ inputs.release-version }}
       package-name: sitectl-libops
+      sitectl-ref: 65cfde137a58ba14aaa9a1512d88b943888872f3
