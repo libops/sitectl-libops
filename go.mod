@@ -4,8 +4,8 @@ go 1.26.3
 
 require (
 	connectrpc.com/connect v1.20.0
-	github.com/libops/proto v0.3.1
-	github.com/libops/sitectl v1.0.0
+	github.com/libops/proto v0.4.0
+	github.com/libops/sitectl v1.0.1
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/protobuf v1.36.11
 )
@@ -77,6 +77,6 @@ require (
 	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
-	google.golang.org/grpc v1.81.1 // indirect
+	google.golang.org/grpc v1.82.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
