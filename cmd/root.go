@@ -19,6 +19,8 @@ func RegisterCommands(sdk *plugin.SDK) {
 	sdk.AddCommand(listCmd)
 	sdk.AddCommand(editCmd)
 	sdk.AddCommand(deleteCmd)
+	sdk.AddCommand(checkCmd)
+	sdk.AddCommand(retryCmd)
 
 	// Other commands
 	sdk.AddCommand(deployCmd)

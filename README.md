@@ -32,6 +32,19 @@ sitectl create project --organization-id ORGANIZATION_ID --name PROJECT_NAME
 
 Use `sitectl checkout` to clone a site environment repository and `sitectl context update` to synchronize its sitectl context.
 
+Custom domains use a server-owned Google Cloud DNS and certificate workflow. Create a pending binding with only the site and hostname, then use its stable domain ID to observe or retry reconciliation:
+
+```bash
+sitectl create domain --site-id "$SITE_ID" --domain journals.example.edu
+sitectl list domains --site-id "$SITE_ID"
+sitectl get domain "$DOMAIN_ID" --site-id "$SITE_ID"
+sitectl check domain "$DOMAIN_ID" --site-id "$SITE_ID"
+sitectl retry domain "$DOMAIN_ID" --site-id "$SITE_ID"
+sitectl delete domain "$DOMAIN_ID" --site-id "$SITE_ID"
+```
+
+Follow the DNS instructions returned by the API exactly. Domain commands do not accept client-selected provisioning, edge, origin, provider, service-tier, or logging policy. SSH and context commands use only the exact `ssh_hostname` returned by the API unless `--ssh-host` is supplied explicitly; they never derive an SSH name from an HTTP hostname.
+
 Deployments wait for the LibOps API result and then run the normal sitectl lifecycle checks. Non-production deployments run both health checks and behavioral verification by default:
 
 ```bash
