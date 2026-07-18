@@ -25,7 +25,7 @@ type siteEnvironment struct {
 	site    *commonv1.SiteConfig
 	project *commonv1.ProjectConfig
 	org     *commonv1.FolderConfig
-	domains []string
+	domains []*commonv1.DomainConfig
 }
 
 var pingCmd = &cobra.Command{
@@ -114,14 +114,10 @@ var sshCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			domain := preferredManagedDomain(env.domains)
-			if domain == "" {
-				domain = preferredSiteDomain(env.domains)
+			sshHost = preferredSSHHostname(env.domains)
+			if sshHost == "" {
+				return missingSSHHostnameError()
 			}
-			if domain == "" {
-				return fmt.Errorf("site has no domains; pass --ssh-host")
-			}
-			sshHost = sshHostForDomain(domain)
 		}
 
 		sshArgs := []string{"-p", fmt.Sprintf("%d", sshPort)}
@@ -250,17 +246,11 @@ func loadSiteEnvironment(ctx context.Context, client *api.LibopsAPIClient, siteI
 	if err != nil {
 		return nil, fmt.Errorf("failed to list site domains: %w", err)
 	}
-	domains := make([]string, 0, len(domainResp.Msg.GetDomains()))
-	for _, domain := range domainResp.Msg.GetDomains() {
-		if value := strings.TrimSpace(domain.GetDomain()); value != "" {
-			domains = append(domains, value)
-		}
-	}
 	return &siteEnvironment{
 		site:    site,
 		project: projectResp.Msg.GetProject(),
 		org:     orgResp.Msg.GetFolder(),
-		domains: domains,
+		domains: domainResp.Msg.GetDomains(),
 	}, nil
 }
 
@@ -284,13 +274,7 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 		pluginName = defaultPluginForSite(env.site)
 	}
 	if sshHost == "" {
-		domain := preferredManagedDomain(env.domains)
-		if domain == "" {
-			domain = preferredSiteDomain(env.domains)
-		}
-		if domain != "" {
-			sshHost = sshHostForDomain(domain)
-		}
+		sshHost = preferredSSHHostname(env.domains)
 	}
 	if sshUser == "" {
 		sshUser = "deploy"
@@ -302,7 +286,7 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 		sshPort = 22
 	}
 	if sshHost == "" {
-		return fmt.Errorf("site has no domains; pass --ssh-host")
+		return missingSSHHostnameError()
 	}
 
 	ctx := &sitectlconfig.Context{
@@ -333,36 +317,68 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 	return nil
 }
 
-func preferredSiteDomain(domains []string) string {
-	if managed := preferredManagedDomain(domains); managed != "" {
-		return managed
+func preferredSiteDomain(domains []*commonv1.DomainConfig) string {
+	for _, domain := range domains {
+		if domain == nil {
+			continue
+		}
+		if hostname := normalizeHostname(domain.GetManagedHostname()); hostname != "" {
+			return hostname
+		}
 	}
 	for _, domain := range domains {
-		if strings.TrimSpace(domain) != "" {
-			return strings.TrimSpace(domain)
+		if domain == nil || domain.GetKind() != commonv1.DomainKind_DOMAIN_KIND_MANAGED {
+			continue
+		}
+		if hostname := normalizeHostname(domain.GetHostname()); hostname != "" {
+			return hostname
+		}
+	}
+	for _, domain := range domains {
+		if domain == nil || !domain.GetRouteReady() {
+			continue
+		}
+		if hostname := normalizeHostname(domain.GetHostname()); hostname != "" {
+			return hostname
+		}
+	}
+	for _, domain := range domains {
+		if domain == nil {
+			continue
+		}
+		if hostname := normalizeHostname(domain.GetHostname()); hostname != "" {
+			return hostname
 		}
 	}
 	return ""
 }
 
-func preferredManagedDomain(domains []string) string {
+func preferredSSHHostname(domains []*commonv1.DomainConfig) string {
 	for _, domain := range domains {
-		domain = strings.TrimSpace(strings.TrimSuffix(domain, "."))
-		if strings.HasSuffix(domain, ".libops.site") {
-			return domain
+		if domain == nil || domain.GetKind() != commonv1.DomainKind_DOMAIN_KIND_MANAGED {
+			continue
+		}
+		if hostname := strings.TrimSpace(domain.GetSshHostname()); hostname != "" {
+			return hostname
+		}
+	}
+	for _, domain := range domains {
+		if domain == nil {
+			continue
+		}
+		if hostname := strings.TrimSpace(domain.GetSshHostname()); hostname != "" {
+			return hostname
 		}
 	}
 	return ""
 }
 
-func sshHostForDomain(domain string) string {
-	domain = strings.TrimSpace(strings.TrimPrefix(domain, "https://"))
-	domain = strings.TrimPrefix(domain, "http://")
-	domain = strings.TrimSuffix(domain, "/")
-	if strings.HasPrefix(domain, "ssh.") {
-		return domain
-	}
-	return "ssh." + domain
+func normalizeHostname(hostname string) string {
+	return strings.TrimSuffix(strings.TrimSpace(hostname), ".")
+}
+
+func missingSSHHostnameError() error {
+	return fmt.Errorf("LibOps API has not returned an SSH hostname for this site; wait for managed-domain provisioning or pass --ssh-host")
 }
 
 func looksLikeURL(value string) bool {
@@ -482,7 +498,7 @@ func addSiteRuntimeContextFlags(cmd *cobra.Command) {
 	cmd.Flags().String("context-name", "", "sitectl context name")
 	cmd.Flags().String("project-dir", "", "Local or remote compose project directory")
 	cmd.Flags().String("plugin", "", "sitectl plugin name; defaults from site application type")
-	cmd.Flags().String("ssh-host", "", "SSH hostname; defaults from the site managed domain")
+	cmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
 	cmd.Flags().String("ssh-user", "deploy", "SSH username")
 	cmd.Flags().Uint("ssh-port", 22, "SSH port")
 	cmd.Flags().String("ssh-key", "", "Path to SSH private key")
@@ -492,7 +508,7 @@ func addSiteRuntimeContextFlags(cmd *cobra.Command) {
 func init() {
 	pingCmd.Flags().Duration("timeout", 30*time.Second, "HTTP timeout")
 
-	sshCmd.Flags().String("ssh-host", "", "SSH hostname; defaults from the site managed domain")
+	sshCmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
 	sshCmd.Flags().String("ssh-user", "deploy", "SSH username")
 	sshCmd.Flags().Uint("ssh-port", 22, "SSH port")
 	sshCmd.Flags().String("ssh-key", "", "Path to SSH private key")
