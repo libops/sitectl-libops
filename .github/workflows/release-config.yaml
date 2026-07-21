@@ -76,3 +76,26 @@ jobs:
             echo "Expected exactly one recovery-safe Homebrew url_template" >&2
             exit 1
           fi
+
+      - name: Verify direct Homebrew publication
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -Eq '^[[:space:]]+(branch|pull_request):' .goreleaser.yaml; then
+            echo "Homebrew publication must update the tap default branch directly" >&2
+            exit 1
+          fi
+
+      - name: Verify trusted package publisher workflow
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW: "libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@5f44a8c8d157bb7e5cf6d9e1c98847a604e87455"
+        run: |
+          set -euo pipefail
+
+          matches="$(grep -Fc "uses: ${EXPECTED_WORKFLOW} # main" .github/workflows/goreleaser.yaml || true)"
+          if [[ "$matches" -ne 1 ]]; then
+            echo "Release publication must use the reviewed shared workflow commit" >&2
+            exit 1
+          fi
