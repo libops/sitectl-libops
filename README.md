@@ -51,7 +51,20 @@ Deployments wait for the LibOps API result and then run the normal sitectl lifec
 sitectl deploy site SITE_ID
 ```
 
-Task Agent commands are available under `sitectl task`.
+Task Agent commands are available under `sitectl task`:
+
+```bash
+sitectl task create "add a publication search" \
+  --organization-id ORGANIZATION_ID --project-id PROJECT_ID
+sitectl task list --organization-id ORGANIZATION_ID
+sitectl task attach TASK_ID --organization-id ORGANIZATION_ID
+```
+
+This release uses the Codex harness with `glm-5.2:cloud`. LibOps API requests
+are printed as credential-free instructions and are never executed by the CLI;
+site code requests continue through the preview-site and pull-request workflow.
+Creation and reply errors print a `--request-id` value—reuse that exact UUID
+when retrying so the server can deduplicate an uncertain delivery.
 
 ## Development
 

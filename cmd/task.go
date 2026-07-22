@@ -3,18 +3,23 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
+	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	libopsv1 "github.com/libops/proto/libops/v1"
 	"github.com/libops/proto/libops/v1/libopsv1connect"
 	"github.com/libops/sitectl-libops/pkg/api"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 type taskAPIClients struct {
@@ -24,7 +29,6 @@ type taskAPIClients struct {
 
 var supportedTaskAgentModels = map[string]struct{}{
 	"glm-5.2:cloud": {},
-	"kimi-k2.6":     {},
 }
 
 var taskCmd = &cobra.Command{
@@ -46,51 +50,61 @@ var taskCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		orgID, _ := cmd.Flags().GetString("organization-id")
-		projectID, _ := cmd.Flags().GetString("project-id")
-		siteID, _ := cmd.Flags().GetString("site-id")
-		agentModel, _ := cmd.Flags().GetString("agent-model")
-		agentModel = strings.TrimSpace(agentModel)
-		if agentModel != "" {
-			if _, ok := supportedTaskAgentModels[agentModel]; !ok {
-				return fmt.Errorf("unsupported agent model %q; Task Agent supports glm-5.2:cloud, kimi-k2.6", agentModel)
-			}
-		}
-		harnessRaw, _ := cmd.Flags().GetString("harness")
-		harness, err := taskHarnessFromString(harnessRaw)
-		if err != nil {
-			return err
-		}
-		noWait, _ := cmd.Flags().GetBool("no-wait")
-		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
-		message := strings.TrimSpace(strings.Join(args, " "))
-
-		resp, err := clients.assistant.Chat(cmd.Context(), connect.NewRequest(&libopsv1.AssistantChatRequest{
-			OrganizationId: orgID,
-			ProjectId:      projectID,
-			SiteId:         siteID,
-			Message:        message,
-			AgentModel:     agentModel,
-			Harness:        harness,
-			Metadata: map[string]string{
-				"conversation_provider":        "cli",
-				"conversation_response_target": "cli_poll",
-			},
-		}))
-		if err != nil {
-			return fmt.Errorf("failed to create task: %w", err)
-		}
-
-		fmt.Printf("Created task: %s\n", resp.Msg.RequestId)
-		if resp.Msg.Reply != "" {
-			fmt.Println(resp.Msg.Reply)
-		}
-		if noWait {
-			return nil
-		}
-		return runTaskChatSession(cmd.Context(), clients, orgID, resp.Msg.RequestId, pollInterval)
+		return runTaskCreate(cmd, args, clients)
 	},
+}
+
+func runTaskCreate(cmd *cobra.Command, args []string, clients *taskAPIClients) error {
+	orgID, _ := cmd.Flags().GetString("organization-id")
+	projectID, _ := cmd.Flags().GetString("project-id")
+	siteID, _ := cmd.Flags().GetString("site-id")
+	agentModel, _ := cmd.Flags().GetString("agent-model")
+	agentModel = strings.TrimSpace(agentModel)
+	if agentModel != "" {
+		if _, ok := supportedTaskAgentModels[agentModel]; !ok {
+			return fmt.Errorf("unsupported agent model %q; Task Agent currently supports glm-5.2:cloud", agentModel)
+		}
+	}
+	harnessRaw, _ := cmd.Flags().GetString("harness")
+	harness, err := taskHarnessFromString(harnessRaw)
+	if err != nil {
+		return err
+	}
+	noWait, _ := cmd.Flags().GetBool("no-wait")
+	pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
+	requestID, _ := cmd.Flags().GetString("request-id")
+	requestID, err = normalizedTaskRequestID(requestID)
+	if err != nil {
+		return err
+	}
+	message := strings.TrimSpace(strings.Join(args, " "))
+
+	resp, err := clients.assistant.Chat(cmd.Context(), connect.NewRequest(&libopsv1.AssistantChatRequest{
+		OrganizationId:  orgID,
+		ProjectId:       projectID,
+		SiteId:          siteID,
+		Message:         message,
+		ClientRequestId: requestID,
+		AgentModel:      agentModel,
+		Harness:         harness,
+		Metadata: map[string]string{
+			"conversation_provider":        "cli",
+			"conversation_response_target": "cli_poll",
+		},
+	}))
+	if err != nil {
+		return fmt.Errorf("failed to create task (retry with --request-id %s): %w", requestID, err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Created task: %s\n", resp.Msg.RequestId)
+	if resp.Msg.Reply != "" {
+		fmt.Fprintln(out, terminalSafe(resp.Msg.Reply))
+	}
+	if noWait {
+		return nil
+	}
+	return runTaskChatSession(cmd.Context(), clients, orgID, resp.Msg.RequestId, pollInterval, cmd.InOrStdin(), out)
 }
 
 var taskListCmd = &cobra.Command{
@@ -139,7 +153,7 @@ var taskListCmd = &cobra.Command{
 			if task.UpdatedAt != nil {
 				updated = task.UpdatedAt.AsTime().Format("2006-01-02 15:04:05")
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", task.TaskId, task.Status.String(), scope, updated, singleLine(task.Prompt))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", singleLine(task.TaskId), task.Status.String(), singleLine(scope), updated, singleLine(task.Prompt))
 		}
 		return w.Flush()
 	},
@@ -172,7 +186,7 @@ var taskGetCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to marshal task: %w", err)
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), terminalSafe(string(out)))
 		return nil
 	},
 }
@@ -192,7 +206,7 @@ var taskAttachCmd = &cobra.Command{
 		}
 		orgID, _ := cmd.Flags().GetString("organization-id")
 		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
-		return runTaskChatSession(cmd.Context(), clients, orgID, args[0], pollInterval)
+		return runTaskChatSession(cmd.Context(), clients, orgID, args[0], pollInterval, cmd.InOrStdin(), cmd.OutOrStdout())
 	},
 }
 
@@ -213,27 +227,24 @@ var taskRespondCmd = &cobra.Command{
 		orgID, _ := cmd.Flags().GetString("organization-id")
 		noWait, _ := cmd.Flags().GetBool("no-wait")
 		pollInterval, _ := cmd.Flags().GetDuration("poll-interval")
+		requestID, _ := cmd.Flags().GetString("request-id")
+		requestID, err = normalizedTaskRequestID(requestID)
+		if err != nil {
+			return err
+		}
 		taskID := args[0]
 		message := strings.TrimSpace(strings.Join(args[1:], " "))
 
-		resp, err := clients.tasks.UpdateTask(cmd.Context(), connect.NewRequest(&libopsv1.UpdateTaskRequest{
-			OrganizationId: orgID,
-			TaskId:         taskID,
-			Status:         libopsv1.TaskStatus_TASK_STATUS_QUEUED,
-			Prompt:         message,
-			InputResponse: &libopsv1.TaskInput{
-				Message: message,
-			},
-		}))
+		resp, err := sendTaskReply(cmd.Context(), clients, orgID, taskID, message, requestID)
 		if err != nil {
-			return fmt.Errorf("failed to reply to task: %w", err)
+			return fmt.Errorf("failed to reply to task (retry with --request-id %s): %w", requestID, err)
 		}
 
-		fmt.Printf("Updated task: %s\n", resp.Msg.GetTask().GetTaskId())
+		fmt.Fprintf(cmd.OutOrStdout(), "Updated task: %s\n", resp.Msg.GetTask().GetTaskId())
 		if noWait {
 			return nil
 		}
-		return runTaskChatSession(cmd.Context(), clients, orgID, taskID, pollInterval)
+		return runTaskChatSession(cmd.Context(), clients, orgID, taskID, pollInterval, cmd.InOrStdin(), cmd.OutOrStdout())
 	},
 }
 
@@ -260,7 +271,7 @@ var taskCancelCmd = &cobra.Command{
 			return fmt.Errorf("failed to cancel task: %w", err)
 		}
 
-		fmt.Printf("Canceled task: %s\n", resp.Msg.GetTask().GetTaskId())
+		fmt.Fprintf(cmd.OutOrStdout(), "Canceled task: %s\n", resp.Msg.GetTask().GetTaskId())
 		return nil
 	},
 }
@@ -280,8 +291,9 @@ func init() {
 
 	taskCreateCmd.Flags().String("project-id", "", "Project ID")
 	taskCreateCmd.Flags().String("site-id", "", "Site ID")
-	taskCreateCmd.Flags().String("agent-model", "glm-5.2:cloud", "Coding agent model (glm-5.2:cloud, kimi-k2.6)")
-	taskCreateCmd.Flags().String("harness", "codex", "Coding harness (codex, claude, pi, opencode, gemini)")
+	taskCreateCmd.Flags().String("agent-model", "glm-5.2:cloud", "Coding agent model (glm-5.2:cloud)")
+	taskCreateCmd.Flags().String("harness", "codex", "Coding harness (codex)")
+	taskCreateCmd.Flags().String("request-id", "", "Stable UUID for safely retrying task creation")
 	taskCreateCmd.Flags().Bool("no-wait", false, "Return after queueing the task")
 	taskCreateCmd.Flags().Duration("poll-interval", 3*time.Second, "Task polling interval while attached")
 	taskAttachCmd.Flags().Duration("poll-interval", 3*time.Second, "Task polling interval while attached")
@@ -290,6 +302,7 @@ func init() {
 	taskListCmd.Flags().Int32("limit", 50, "Maximum tasks to return")
 	taskRespondCmd.Flags().Bool("no-wait", false, "Return after queueing the reply")
 	taskRespondCmd.Flags().Duration("poll-interval", 3*time.Second, "Task polling interval while attached")
+	taskRespondCmd.Flags().String("request-id", "", "Stable UUID for safely retrying this task reply")
 }
 
 func newTaskAPIClients(ctx context.Context, apiBaseURL string) (*taskAPIClients, error) {
@@ -307,20 +320,39 @@ func taskHarnessFromString(raw string) (libopsv1.TaskHarness, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "codex":
 		return libopsv1.TaskHarness_TASK_HARNESS_CODEX, nil
-	case "claude":
-		return libopsv1.TaskHarness_TASK_HARNESS_CLAUDE, nil
-	case "pi":
-		return libopsv1.TaskHarness_TASK_HARNESS_PI, nil
-	case "opencode":
-		return libopsv1.TaskHarness_TASK_HARNESS_OPENCODE, nil
-	case "gemini":
-		return libopsv1.TaskHarness_TASK_HARNESS_GEMINI, nil
 	default:
-		return libopsv1.TaskHarness_TASK_HARNESS_UNSPECIFIED, fmt.Errorf("unsupported harness %q; Task Agent supports codex, claude, pi, opencode, gemini", raw)
+		return libopsv1.TaskHarness_TASK_HARNESS_UNSPECIFIED, fmt.Errorf("unsupported harness %q; Task Agent currently supports codex", raw)
 	}
 }
 
+func normalizedTaskRequestID(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return uuid.NewString(), nil
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("request-id must be a UUID")
+	}
+	return parsed.String(), nil
+}
+
+func sendTaskReply(ctx context.Context, clients *taskAPIClients, orgID, taskID, message, requestID string) (*connect.Response[libopsv1.UpdateTaskResponse], error) {
+	request := connect.NewRequest(&libopsv1.UpdateTaskRequest{
+		OrganizationId: orgID,
+		TaskId:         taskID,
+		Status:         libopsv1.TaskStatus_TASK_STATUS_QUEUED,
+		Prompt:         message,
+		InputResponse: &libopsv1.TaskInput{
+			Message: message,
+		},
+	})
+	request.Header().Set("Idempotency-Key", "cli-task-reply:"+requestID)
+	return clients.tasks.UpdateTask(ctx, request)
+}
+
 func singleLine(value string) string {
+	value = terminalSafe(value)
 	value = strings.Join(strings.Fields(value), " ")
 	if len(value) > 96 {
 		return value[:93] + "..."
@@ -328,11 +360,12 @@ func singleLine(value string) string {
 	return value
 }
 
-func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, taskID string, interval time.Duration) error {
+func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, taskID string, interval time.Duration, in io.Reader, out io.Writer) error {
 	if interval <= 0 {
 		interval = 3 * time.Second
 	}
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(in)
+	consecutivePollErrors := 0
 	var lastStatus libopsv1.TaskStatus
 	var lastMessageCount int
 	var lastResultCount int
@@ -342,23 +375,46 @@ func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, tas
 			TaskId:         taskID,
 		}))
 		if err != nil {
+			if isRetryableTaskPollError(err) && consecutivePollErrors < 2 {
+				consecutivePollErrors++
+				if waitErr := waitForTaskPoll(ctx, interval); waitErr != nil {
+					return waitErr
+				}
+				continue
+			}
 			return fmt.Errorf("failed to get task: %w", err)
 		}
+		consecutivePollErrors = 0
 		task := resp.Msg.GetTask()
 		if task == nil {
 			return fmt.Errorf("task not found")
 		}
 		if task.GetStatus() != lastStatus || len(task.GetMessages()) != lastMessageCount || len(task.GetResults()) != lastResultCount {
-			printTaskChatUpdate(task)
+			printTaskChatUpdate(out, task)
 			lastStatus = task.GetStatus()
 			lastMessageCount = len(task.GetMessages())
 			lastResultCount = len(task.GetResults())
 		}
 		switch task.GetStatus() {
-		case libopsv1.TaskStatus_TASK_STATUS_COMPLETED, libopsv1.TaskStatus_TASK_STATUS_FAILED, libopsv1.TaskStatus_TASK_STATUS_CANCELED:
+		case libopsv1.TaskStatus_TASK_STATUS_COMPLETED:
 			return nil
+		case libopsv1.TaskStatus_TASK_STATUS_FAILED:
+			if reason := taskFailureReason(task); reason != "" {
+				return fmt.Errorf("task %s failed: %s", task.GetTaskId(), reason)
+			}
+			return fmt.Errorf("task %s failed", task.GetTaskId())
+		case libopsv1.TaskStatus_TASK_STATUS_CANCELED:
+			return fmt.Errorf("task %s was canceled", task.GetTaskId())
+		}
+		if taskAPIAction(task) != nil {
+			return nil
+		}
+		if task.GetStatus() == libopsv1.TaskStatus_TASK_STATUS_RUNNING && taskPullRequestReady(task) {
+			return nil
+		}
+		switch task.GetStatus() {
 		case libopsv1.TaskStatus_TASK_STATUS_NEEDS_INPUT:
-			fmt.Print("reply> ")
+			fmt.Fprint(out, "reply> ")
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				return err
@@ -367,72 +423,110 @@ func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, tas
 			if message == "" {
 				continue
 			}
-			_, err = clients.tasks.UpdateTask(ctx, connect.NewRequest(&libopsv1.UpdateTaskRequest{
-				OrganizationId: orgID,
-				TaskId:         taskID,
-				Status:         libopsv1.TaskStatus_TASK_STATUS_QUEUED,
-				Prompt:         message,
-				InputResponse: &libopsv1.TaskInput{
-					Message: message,
-				},
-			}))
+			requestID := uuid.NewString()
+			_, err = sendTaskReply(ctx, clients, orgID, taskID, message, requestID)
 			if err != nil {
-				return fmt.Errorf("failed to reply to task: %w", err)
+				return fmt.Errorf("failed to reply to task (retry with `sitectl task respond %s <message> --request-id %s`): %w", taskID, requestID, err)
 			}
-			fmt.Println("Reply sent.")
+			fmt.Fprintln(out, "Reply sent.")
 		default:
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(interval):
+			if err := waitForTaskPoll(ctx, interval); err != nil {
+				return err
 			}
 		}
 	}
 }
 
-func printTaskChatUpdate(task *libopsv1.Task) {
+func taskPullRequestReady(task *libopsv1.Task) bool {
+	if task == nil {
+		return false
+	}
+	followupGeneration, valid := taskStructUint64(task.GetInputResponse().GetFields(), "task_followup_generation")
+	if !valid {
+		return false
+	}
+	for _, result := range task.GetResults() {
+		if result.GetType() != libopsv1.TaskResultType_TASK_RESULT_PR_CREATED || strings.TrimSpace(result.GetPrUrl()) == "" {
+			continue
+		}
+		resultGeneration, valid := taskStructUint64(result.GetMetadata(), "task_followup_generation")
+		if valid && resultGeneration >= followupGeneration {
+			return true
+		}
+	}
+	return false
+}
+
+func taskStructUint64(value *structpb.Struct, key string) (uint64, bool) {
+	if value == nil {
+		return 0, true
+	}
+	rawValue, exists := value.AsMap()[key]
+	if !exists {
+		return 0, true
+	}
+	raw := strings.TrimSpace(fmt.Sprint(rawValue))
+	parsed, err := strconv.ParseUint(raw, 10, 64)
+	return parsed, err == nil
+}
+
+func isRetryableTaskPollError(err error) bool {
+	switch connect.CodeOf(err) {
+	case connect.CodeAborted, connect.CodeDeadlineExceeded, connect.CodeResourceExhausted, connect.CodeUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForTaskPoll(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func printTaskChatUpdate(out io.Writer, task *libopsv1.Task) {
 	if task.GetStatus() == libopsv1.TaskStatus_TASK_STATUS_COMPLETED {
-		printTaskCompletion(task)
+		printTaskCompletion(out, task)
 		return
 	}
 
-	fmt.Printf("\n[%s] %s\n", task.GetStatus().String(), task.GetTaskId())
+	fmt.Fprintf(out, "\n[%s] %s\n", task.GetStatus().String(), task.GetTaskId())
 	if message := task.GetInputRequest().GetMessage(); task.GetStatus() == libopsv1.TaskStatus_TASK_STATUS_NEEDS_INPUT && strings.TrimSpace(message) != "" {
-		fmt.Println(message)
+		fmt.Fprintln(out, terminalSafe(message))
 	}
 	for _, result := range task.GetResults() {
 		switch result.GetType() {
 		case libopsv1.TaskResultType_TASK_RESULT_PR_CREATED:
 			if result.GetPrUrl() != "" {
-				fmt.Printf("Pull request: %s\n", result.GetPrUrl())
+				fmt.Fprintf(out, "Pull request: %s\n", singleLine(result.GetPrUrl()))
 			}
 		case libopsv1.TaskResultType_TASK_RESULT_DEPLOYMENT:
 			if result.GetDeploymentId() != "" {
-				fmt.Printf("Deployment: %s\n", result.GetDeploymentId())
+				fmt.Fprintf(out, "Deployment: %s\n", singleLine(result.GetDeploymentId()))
 			}
 		case libopsv1.TaskResultType_TASK_RESULT_API_ACTION:
 			if action := result.GetApiAction(); action != nil {
-				fmt.Printf("Action ready: %s %s\n", strings.ToUpper(action.GetMethod()), action.GetPath())
-				if action.GetDescription() != "" {
-					fmt.Println(action.GetDescription())
-				}
+				printTaskAPIAction(out, action)
 			}
 		}
 	}
 }
 
-func printTaskCompletion(task *libopsv1.Task) {
-	fmt.Printf("\nLibOps task `%s` is ready.\n", shortTaskID(task.GetTaskId()))
+func printTaskCompletion(out io.Writer, task *libopsv1.Task) {
+	fmt.Fprintf(out, "\nLibOps task `%s` is ready.\n", singleLine(shortTaskID(task.GetTaskId())))
 	var previewURL, prURL, summary string
 	for _, result := range task.GetResults() {
 		if result.GetDeploymentId() != "" {
-			fmt.Printf("Deployment: `%s`\n", result.GetDeploymentId())
+			fmt.Fprintf(out, "Deployment: `%s`\n", singleLine(result.GetDeploymentId()))
 		}
 		if action := result.GetApiAction(); action != nil {
-			fmt.Printf("Action ready: %s %s\n", strings.ToUpper(action.GetMethod()), action.GetPath())
-			if action.GetDescription() != "" {
-				fmt.Println(action.GetDescription())
-			}
+			printTaskAPIAction(out, action)
 		}
 		if previewURL == "" {
 			previewURL = firstNonEmptyString(
@@ -448,14 +542,118 @@ func printTaskCompletion(task *libopsv1.Task) {
 		}
 	}
 	if previewURL != "" {
-		fmt.Printf("Preview: %s\n", previewURL)
+		fmt.Fprintf(out, "Preview: %s\n", singleLine(previewURL))
 	}
 	if prURL != "" {
-		fmt.Printf("Pull request: %s\n", prURL)
+		fmt.Fprintf(out, "Pull request: %s\n", singleLine(prURL))
 	}
 	if summary != "" {
-		fmt.Printf("Summary:\n%s\n", summary)
+		fmt.Fprintf(out, "Summary:\n%s\n", terminalSafe(summary))
 	}
+}
+
+func taskAPIAction(task *libopsv1.Task) *libopsv1.TaskApiAction {
+	for _, result := range task.GetResults() {
+		if action := result.GetApiAction(); action != nil {
+			return action
+		}
+	}
+	return nil
+}
+
+func taskFailureReason(task *libopsv1.Task) string {
+	logs := task.GetLogs()
+	for i := len(logs) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(logs[i].GetLevel()), "error") {
+			if message := strings.TrimSpace(logs[i].GetMessage()); message != "" {
+				return terminalSafe(message)
+			}
+		}
+	}
+	return ""
+}
+
+func printTaskAPIAction(out io.Writer, action *libopsv1.TaskApiAction) {
+	fmt.Fprintln(out, "API action ready. Run this request with an authenticated LibOps API client:")
+	if description := strings.TrimSpace(action.GetDescription()); description != "" {
+		fmt.Fprintf(out, "Description: %s\n", terminalSafe(description))
+	}
+	fmt.Fprintf(out, "Method: %s\n", singleLine(strings.ToUpper(strings.TrimSpace(action.GetMethod()))))
+	fmt.Fprintf(out, "Path: %s\n", singleLine(action.GetPath()))
+
+	headers, omitted := safeAPIActionHeaders(action)
+	fmt.Fprintln(out, "Headers:")
+	fmt.Fprintln(out, prettyJSON(headers))
+	if omitted > 0 {
+		fmt.Fprintf(out, "%d secret-bearing header(s) omitted.\n", omitted)
+	}
+	fmt.Fprintln(out, "Body:")
+	body := map[string]any{}
+	if action.GetBody() != nil {
+		body = action.GetBody().AsMap()
+	}
+	fmt.Fprintln(out, prettyJSON(body))
+	fmt.Fprintln(out, "Authentication is supplied by your API client; credential values are never displayed.")
+}
+
+func safeAPIActionHeaders(action *libopsv1.TaskApiAction) (map[string]any, int) {
+	safe := map[string]any{}
+	if action.GetHeaders() == nil {
+		return safe, 0
+	}
+	omitted := 0
+	for name, value := range action.GetHeaders().AsMap() {
+		if isSensitiveHeader(name) {
+			omitted++
+			continue
+		}
+		safe[name] = value
+	}
+	return safe, omitted
+}
+
+func isSensitiveHeader(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.NewReplacer("_", "-", " ", "-").Replace(normalized)
+	for _, marker := range []string{
+		"authorization",
+		"cookie",
+		"token",
+		"secret",
+		"password",
+		"credential",
+		"api-key",
+		"apikey",
+		"signature",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func prettyJSON(value any) string {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return terminalSafe(string(encoded))
+}
+
+// terminalSafe removes terminal control and Unicode formatting characters from
+// server/model-controlled output. Newlines and tabs remain available for the
+// intentionally formatted task transcript and JSON instructions.
+func terminalSafe(value string) string {
+	return strings.Map(func(character rune) rune {
+		if character == '\n' || character == '\t' {
+			return character
+		}
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf) {
+			return -1
+		}
+		return character
+	}, value)
 }
 
 func taskResultMetadataString(result *libopsv1.TaskResult, key string) string {
