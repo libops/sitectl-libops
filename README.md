@@ -58,6 +58,8 @@ sitectl task create "add a publication search" \
   --organization-id ORGANIZATION_ID --project-id PROJECT_ID
 sitectl task list --organization-id ORGANIZATION_ID
 sitectl task attach TASK_ID --organization-id ORGANIZATION_ID
+sitectl task respond TASK_ID "use the existing component" \
+  --organization-id ORGANIZATION_ID
 ```
 
 This release uses the Codex harness with `glm-5.2:cloud`. LibOps API requests

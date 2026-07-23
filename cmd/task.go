@@ -416,7 +416,10 @@ func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, tas
 		case libopsv1.TaskStatus_TASK_STATUS_NEEDS_INPUT:
 			fmt.Fprint(out, "reply> ")
 			line, err := reader.ReadString('\n')
-			if err != nil {
+			// Readers may return the final bytes together with io.EOF. Process
+			// those bytes so non-interactive callers do not need a trailing
+			// newline for their reply to be delivered.
+			if err != nil && len(line) == 0 {
 				return err
 			}
 			message := strings.TrimSpace(line)
@@ -554,6 +557,9 @@ func printTaskCompletion(out io.Writer, task *libopsv1.Task) {
 
 func taskAPIAction(task *libopsv1.Task) *libopsv1.TaskApiAction {
 	for _, result := range task.GetResults() {
+		if result.GetType() != libopsv1.TaskResultType_TASK_RESULT_API_ACTION {
+			continue
+		}
 		if action := result.GetApiAction(); action != nil {
 			return action
 		}

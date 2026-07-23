@@ -190,6 +190,16 @@ func TestTaskOutputRemovesTerminalControlAndFormattingCharacters(t *testing.T) {
 	}
 }
 
+func TestTaskAPIActionRequiresAPIActionResultType(t *testing.T) {
+	task := &libopsv1.Task{Results: []*libopsv1.TaskResult{{
+		Type:      libopsv1.TaskResultType_TASK_RESULT_PR_CREATED,
+		ApiAction: &libopsv1.TaskApiAction{Method: http.MethodPost, Path: "/libops.v1.ProjectService/CreateProject"},
+	}}}
+	if action := taskAPIAction(task); action != nil {
+		t.Fatalf("taskAPIAction() = %#v for non-API-action result", action)
+	}
+}
+
 func TestRunTaskCreateRejectsUnsupportedReleaseProfile(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -349,6 +359,64 @@ func TestRunTaskChatSessionWaitsForCurrentFollowupGeneration(t *testing.T) {
 	}
 }
 
+func TestRunTaskChatSessionInteractiveReplyUsesIdempotencyKey(t *testing.T) {
+	var getCalls atomic.Int32
+	var updateCalls atomic.Int32
+	var gotIdempotencyKey string
+	clients := newTestTaskAPIClients(t, unimplementedTestAssistantService(), &testTaskService{
+		getTask: func(_ context.Context, req *connect.Request[libopsv1.GetTaskRequest]) (*connect.Response[libopsv1.GetTaskResponse], error) {
+			if req.Msg.GetOrganizationId() != "org-1" || req.Msg.GetTaskId() != "task-interactive" {
+				t.Fatalf("unexpected task lookup: %#v", req.Msg)
+			}
+			if getCalls.Add(1) == 1 {
+				return connect.NewResponse(&libopsv1.GetTaskResponse{Task: &libopsv1.Task{
+					TaskId:       "task-interactive",
+					Status:       libopsv1.TaskStatus_TASK_STATUS_NEEDS_INPUT,
+					InputRequest: &libopsv1.TaskInput{Message: "Which approach should I use?"},
+				}}), nil
+			}
+			return connect.NewResponse(&libopsv1.GetTaskResponse{Task: &libopsv1.Task{
+				TaskId: "task-interactive",
+				Status: libopsv1.TaskStatus_TASK_STATUS_COMPLETED,
+			}}), nil
+		},
+		updateTask: func(_ context.Context, req *connect.Request[libopsv1.UpdateTaskRequest]) (*connect.Response[libopsv1.UpdateTaskResponse], error) {
+			updateCalls.Add(1)
+			gotIdempotencyKey = req.Header().Get("Idempotency-Key")
+			if req.Msg.GetOrganizationId() != "org-1" || req.Msg.GetTaskId() != "task-interactive" {
+				t.Fatalf("unexpected task reply scope: %#v", req.Msg)
+			}
+			if req.Msg.GetStatus() != libopsv1.TaskStatus_TASK_STATUS_QUEUED || req.Msg.GetInputResponse().GetMessage() != "use the existing component" {
+				t.Fatalf("unexpected task reply: %#v", req.Msg)
+			}
+			return connect.NewResponse(&libopsv1.UpdateTaskResponse{Task: &libopsv1.Task{TaskId: "task-interactive"}}), nil
+		},
+	})
+
+	var output bytes.Buffer
+	// Deliberately omit a trailing newline: piped and redirected input must still
+	// send the final response returned alongside io.EOF.
+	err := runTaskChatSession(context.Background(), clients, "org-1", "task-interactive", time.Millisecond, strings.NewReader("use the existing component"), &output)
+	if err != nil {
+		t.Fatalf("runTaskChatSession() error = %v", err)
+	}
+	if getCalls.Load() != 2 || updateCalls.Load() != 1 {
+		t.Fatalf("GetTask calls = %d, UpdateTask calls = %d; want 2 and 1", getCalls.Load(), updateCalls.Load())
+	}
+	const prefix = "cli-task-reply:"
+	if !strings.HasPrefix(gotIdempotencyKey, prefix) {
+		t.Fatalf("Idempotency-Key = %q, want %q prefix", gotIdempotencyKey, prefix)
+	}
+	if _, err := uuid.Parse(strings.TrimPrefix(gotIdempotencyKey, prefix)); err != nil {
+		t.Fatalf("Idempotency-Key = %q, want UUID suffix: %v", gotIdempotencyKey, err)
+	}
+	for _, want := range []string{"Which approach should I use?", "reply> ", "Reply sent.", "LibOps task `task-int` is ready."} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
 func TestSendTaskReplyUsesStableIdempotencyKey(t *testing.T) {
 	requestID := "d4300b29-cd64-469c-b717-eba17cf9315d"
 	var gotHeader string
@@ -370,6 +438,31 @@ func TestSendTaskReplyUsesStableIdempotencyKey(t *testing.T) {
 	}
 	if gotHeader != "cli-task-reply:"+requestID {
 		t.Fatalf("Idempotency-Key = %q", gotHeader)
+	}
+}
+
+func TestTaskCreateReleaseProfileFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		wantDefault string
+		wantUsage   string
+	}{
+		{name: "agent-model", wantDefault: "glm-5.2:cloud", wantUsage: "(glm-5.2:cloud)"},
+		{name: "harness", wantDefault: "codex", wantUsage: "(codex)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flag := taskCreateCmd.Flags().Lookup(tt.name)
+			if flag == nil {
+				t.Fatalf("flag --%s is not registered", tt.name)
+			}
+			if flag.DefValue != tt.wantDefault {
+				t.Errorf("--%s default = %q, want %q", tt.name, flag.DefValue, tt.wantDefault)
+			}
+			if !strings.Contains(flag.Usage, tt.wantUsage) {
+				t.Errorf("--%s usage = %q, want containing %q", tt.name, flag.Usage, tt.wantUsage)
+			}
+		})
 	}
 }
 
