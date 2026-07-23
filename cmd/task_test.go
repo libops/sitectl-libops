@@ -306,13 +306,19 @@ func TestRunTaskChatSessionRetriesTransientGetFailure(t *testing.T) {
 
 func TestRunTaskChatSessionReturnsWhenCurrentPullRequestIsReady(t *testing.T) {
 	task := &libopsv1.Task{
-		TaskId:        "task-pr-ready",
-		Status:        libopsv1.TaskStatus_TASK_STATUS_RUNNING,
-		InputResponse: &libopsv1.TaskInput{Fields: mustStruct(t, map[string]any{"task_followup_generation": 2})},
+		TaskId: "task-pr-ready",
+		Status: libopsv1.TaskStatus_TASK_STATUS_RUNNING,
+		InputResponse: &libopsv1.TaskInput{Fields: mustStruct(t, map[string]any{
+			"task_followup_generation": 2,
+			"preview_url":              "https://preview.example.test/task-pr-ready",
+		})},
 		Results: []*libopsv1.TaskResult{{
-			Type:     libopsv1.TaskResultType_TASK_RESULT_PR_CREATED,
-			PrUrl:    "https://github.com/libops/site/pull/12",
-			Metadata: mustStruct(t, map[string]any{"task_followup_generation": 2}),
+			Type:  libopsv1.TaskResultType_TASK_RESULT_PR_CREATED,
+			PrUrl: "https://github.com/libops/site/pull/12",
+			Metadata: mustStruct(t, map[string]any{
+				"task_followup_generation": 2,
+				"summary":                  "Implemented the requested site change.",
+			}),
 		}},
 	}
 	clients := newTestTaskAPIClients(t, unimplementedTestAssistantService(), &testTaskService{
@@ -325,8 +331,16 @@ func TestRunTaskChatSessionReturnsWhenCurrentPullRequestIsReady(t *testing.T) {
 	if err := runTaskChatSession(context.Background(), clients, "org-1", task.GetTaskId(), time.Millisecond, strings.NewReader(""), &output); err != nil {
 		t.Fatalf("runTaskChatSession() error = %v", err)
 	}
-	if !strings.Contains(output.String(), task.GetResults()[0].GetPrUrl()) {
-		t.Fatalf("pull request was not printed:\n%s", output.String())
+	for _, want := range []string{
+		"LibOps task `task-pr-` is ready for review.",
+		task.GetResults()[0].GetPrUrl(),
+		"Preview: https://preview.example.test/task-pr-ready",
+		"Summary:\nImplemented the requested site change.",
+		"The task remains open until this pull request is merged or closed.",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("review handoff missing %q:\n%s", want, output.String())
+		}
 	}
 }
 

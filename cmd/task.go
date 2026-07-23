@@ -441,12 +441,16 @@ func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, tas
 }
 
 func taskPullRequestReady(task *libopsv1.Task) bool {
+	return currentTaskPullRequestResult(task) != nil
+}
+
+func currentTaskPullRequestResult(task *libopsv1.Task) *libopsv1.TaskResult {
 	if task == nil {
-		return false
+		return nil
 	}
 	followupGeneration, valid := taskStructUint64(task.GetInputResponse().GetFields(), "task_followup_generation")
 	if !valid {
-		return false
+		return nil
 	}
 	for _, result := range task.GetResults() {
 		if result.GetType() != libopsv1.TaskResultType_TASK_RESULT_PR_CREATED || strings.TrimSpace(result.GetPrUrl()) == "" {
@@ -454,10 +458,10 @@ func taskPullRequestReady(task *libopsv1.Task) bool {
 		}
 		resultGeneration, valid := taskStructUint64(result.GetMetadata(), "task_followup_generation")
 		if valid && resultGeneration >= followupGeneration {
-			return true
+			return result
 		}
 	}
-	return false
+	return nil
 }
 
 func taskStructUint64(value *structpb.Struct, key string) (uint64, bool) {
@@ -498,6 +502,12 @@ func printTaskChatUpdate(out io.Writer, task *libopsv1.Task) {
 		printTaskCompletion(out, task)
 		return
 	}
+	if task.GetStatus() == libopsv1.TaskStatus_TASK_STATUS_RUNNING {
+		if result := currentTaskPullRequestResult(task); result != nil {
+			printTaskReviewReady(out, task, result)
+			return
+		}
+	}
 
 	fmt.Fprintf(out, "\n[%s] %s\n", task.GetStatus().String(), task.GetTaskId())
 	if message := task.GetInputRequest().GetMessage(); task.GetStatus() == libopsv1.TaskStatus_TASK_STATUS_NEEDS_INPUT && strings.TrimSpace(message) != "" {
@@ -519,6 +529,24 @@ func printTaskChatUpdate(out io.Writer, task *libopsv1.Task) {
 			}
 		}
 	}
+}
+
+func printTaskReviewReady(out io.Writer, task *libopsv1.Task, result *libopsv1.TaskResult) {
+	fmt.Fprintf(out, "\nLibOps task `%s` is ready for review.\n", singleLine(shortTaskID(task.GetTaskId())))
+	fmt.Fprintf(out, "Pull request: %s\n", singleLine(result.GetPrUrl()))
+	previewURL := firstNonEmptyString(
+		taskResultMetadataString(result, "preview_url"),
+		taskResultMetadataString(result, "preview_site_url"),
+		taskInputFieldString(task.GetInputResponse(), "preview_url"),
+		taskInputFieldString(task.GetInputResponse(), "preview_site_url"),
+	)
+	if previewURL != "" {
+		fmt.Fprintf(out, "Preview: %s\n", singleLine(previewURL))
+	}
+	if summary := taskResultMetadataString(result, "summary"); summary != "" {
+		fmt.Fprintf(out, "Summary:\n%s\n", terminalSafe(summary))
+	}
+	fmt.Fprintln(out, "The task remains open until this pull request is merged or closed.")
 }
 
 func printTaskCompletion(out io.Writer, task *libopsv1.Task) {
@@ -667,6 +695,14 @@ func taskResultMetadataString(result *libopsv1.TaskResult, key string) string {
 		return ""
 	}
 	value, _ := result.GetMetadata().AsMap()[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func taskInputFieldString(input *libopsv1.TaskInput, key string) string {
+	if input == nil || input.GetFields() == nil {
+		return ""
+	}
+	value, _ := input.GetFields().AsMap()[key].(string)
 	return strings.TrimSpace(value)
 }
 
