@@ -296,7 +296,7 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 		DockerHostType:         sitectlconfig.ContextRemote,
 		Environment:            env.site.GetSiteName(),
 		DockerSocket:           "/var/run/docker.sock",
-		ProjectName:            valueOrDefault(env.project.GetProjectName(), "docker-compose"),
+		ComposeProjectName:     valueOrDefault(env.project.GetProjectName(), "docker-compose"),
 		ProjectDir:             projectDir,
 		SSHUser:                sshUser,
 		SSHHostname:            sshHost,
@@ -501,7 +501,7 @@ func addSiteRuntimeContextFlags(cmd *cobra.Command) {
 	cmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
 	cmd.Flags().String("ssh-user", "deploy", "SSH username")
 	cmd.Flags().Uint("ssh-port", 22, "SSH port")
-	cmd.Flags().String("ssh-key", "", "Path to SSH private key")
+	cmd.Flags().String("ssh-key", "", "Local private key used to authenticate the generated sitectl context to the managed host.")
 	cmd.Flags().Bool("default", true, "Set the updated context as current")
 }
 
@@ -511,7 +511,7 @@ func init() {
 	sshCmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
 	sshCmd.Flags().String("ssh-user", "deploy", "SSH username")
 	sshCmd.Flags().Uint("ssh-port", 22, "SSH port")
-	sshCmd.Flags().String("ssh-key", "", "Path to SSH private key")
+	sshCmd.Flags().String("ssh-key", "", "Local private key used to authenticate the SSH session to the managed host.")
 	sshCmd.Flags().SetInterspersed(false)
 
 	checkoutCmd.Flags().Bool("update-context", false, "Update a sitectl context after checkout")

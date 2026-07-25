@@ -292,7 +292,7 @@ func init() {
 	createSiteCmd.Flags().String("name", "", "Site name (required)")
 	createSiteCmd.Flags().String("github-repository", "", "GitHub repository URL (required)")
 	createSiteCmd.Flags().String("github-ref", "", "GitHub reference (e.g., heads/main, tags/v1.0)")
-	createSiteCmd.Flags().String("compose-path", "/mnt/disks/data/compose", "Path to docker-compose directory")
+	createSiteCmd.Flags().String("compose-path", "/mnt/disks/data/compose", "Absolute project directory where the managed host stores this site's Docker Compose files.")
 	createSiteCmd.Flags().String("compose-file", "docker-compose.yml", "Docker compose file name")
 	createSiteCmd.Flags().Int32("port", 80, "Port the application listens on")
 	createSiteCmd.Flags().String("application-type", "", "Type of application (drupal, ojs, wordpress, omeka-classic, omeka-s, archivesspace, islandora)")

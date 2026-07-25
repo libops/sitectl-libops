@@ -171,7 +171,7 @@ func init() {
 	createSSHKeyCmd.Flags().String("account-id", "", "Account ID; defaults to the authenticated account")
 	createSSHKeyCmd.Flags().String("name", "", "SSH key name")
 	createSSHKeyCmd.Flags().String("public-key", "", "SSH public key content")
-	createSSHKeyCmd.Flags().String("public-key-file", "", "Path to SSH public key file")
+	createSSHKeyCmd.Flags().String("public-key-file", "", "Local public key file to authorize for LibOps SSH access.")
 
 	listSSHKeysCmd.Flags().String("account-id", "", "Account ID; defaults to the authenticated account")
 

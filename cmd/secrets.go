@@ -360,7 +360,7 @@ func init() {
 	createSecretsCmd.Flags().String("site-id", "", "Site ID")
 	createSecretsCmd.Flags().String("name", "", "Secret name (required)")
 	createSecretsCmd.Flags().String("value", "", "Secret value")
-	createSecretsCmd.Flags().String("value-file", "", "Path to a file containing the secret value")
+	createSecretsCmd.Flags().String("value-file", "", "Local file whose complete contents become the new secret value.")
 	_ = createSecretsCmd.MarkFlagRequired("name")
 	createSecretsCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
 	createSecretsCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
@@ -377,7 +377,7 @@ func init() {
 	editSecretCmd.Flags().String("project-id", "", "Project ID")
 	editSecretCmd.Flags().String("site-id", "", "Site ID")
 	editSecretCmd.Flags().String("value", "", "Secret value")
-	editSecretCmd.Flags().String("value-file", "", "Path to a file containing the secret value")
+	editSecretCmd.Flags().String("value-file", "", "Local file whose complete contents replace the existing secret value.")
 	editSecretCmd.MarkFlagsOneRequired("organization-id", "project-id", "site-id")
 	editSecretCmd.MarkFlagsMutuallyExclusive("organization-id", "project-id", "site-id")
 

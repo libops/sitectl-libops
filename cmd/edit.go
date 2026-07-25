@@ -349,7 +349,7 @@ func init() {
 	editSiteCmd.Flags().String("name", "", "Site name")
 	editSiteCmd.Flags().String("github-repository", "", "GitHub repository URL")
 	editSiteCmd.Flags().String("github-ref", "", "GitHub reference (e.g., heads/main, tags/v1.0)")
-	editSiteCmd.Flags().String("compose-path", "", "Path to docker-compose directory")
+	editSiteCmd.Flags().String("compose-path", "", "Absolute project directory the managed host uses for this site's Docker Compose files.")
 	editSiteCmd.Flags().String("compose-file", "", "Docker compose file name")
 	editSiteCmd.Flags().Int32("port", 0, "Port the application listens on")
 	editSiteCmd.Flags().String("application-type", "", "Type of application")
