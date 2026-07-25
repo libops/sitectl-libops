@@ -6,7 +6,7 @@ require (
 	connectrpc.com/connect v1.20.0
 	github.com/google/uuid v1.6.0
 	github.com/libops/proto v1.0.0
-	github.com/libops/sitectl v1.0.2
+	github.com/libops/sitectl v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	google.golang.org/protobuf v1.36.11
