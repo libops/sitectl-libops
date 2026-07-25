@@ -25,7 +25,7 @@ lint:
 	fi
 
 check-core-version:
-	./scripts/check-sitectl-core-version.sh v1.0.0
+	./scripts/check-sitectl-core-version.sh v1.4.0
 
 test: check-core-version build
 	$(GO) test -v -race ./...
