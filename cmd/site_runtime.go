@@ -302,7 +302,7 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 		SSHHostname:            sshHost,
 		SSHPort:                sshPort,
 		SSHKeyPath:             sshKey,
-		ComposeFile:            []string{valueOrDefault(env.site.GetComposeFile(), "docker-compose.yml")},
+		ComposeFile:            []string{valueOrDefault(env.site.GetComposeFile(), "compose.yaml")},
 		DatabaseService:        "mariadb",
 		DatabaseUser:           "root",
 		DatabaseName:           "drupal_default",
