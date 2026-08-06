@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release-version || github.ref }}
           persist-credentials: false
@@ -53,7 +53,7 @@ jobs:
 
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@5f44a8c8d157bb7e5cf6d9e1c98847a604e87455 # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@92a70c027cfe2553a8bc4adaba67a3e620ff6958 # main
     permissions:
       contents: write
       id-token: write
