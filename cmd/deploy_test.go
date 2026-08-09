@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type deployExecCall struct {
@@ -137,14 +139,72 @@ func TestDeploymentStatusDisposition(t *testing.T) {
 	}{
 		{status: "deploying", want: deploymentStatusPending},
 		{status: "pending", want: deploymentStatusPending},
+		{status: "active", want: deploymentStatusInvalid},
 		{status: "deployed", want: deploymentStatusSucceeded},
-		{status: "completed", want: deploymentStatusSucceeded},
+		{status: "completed", want: deploymentStatusInvalid},
 		{status: "failed", want: deploymentStatusFailed},
 		{status: "error", want: deploymentStatusFailed},
+		{status: "superseded", want: deploymentStatusFailed},
 	}
 	for _, tt := range tests {
 		if got := deploymentStatusDisposition(tt.status); got != tt.want {
 			t.Fatalf("deploymentStatusDisposition(%q) = %q, want %q", tt.status, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizedDeploymentCommitSHA(t *testing.T) {
+	const uppercase = "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+	got, err := normalizedDeploymentCommitSHA(uppercase)
+	if err != nil {
+		t.Fatalf("normalizedDeploymentCommitSHA() error = %v", err)
+	}
+	if got != strings.ToLower(uppercase) {
+		t.Fatalf("normalizedDeploymentCommitSHA() = %q, want lowercase SHA", got)
+	}
+
+	for _, invalid := range []string{"", "abc", strings.Repeat("z", 40), strings.Repeat("a", 39), strings.Repeat("a", 65)} {
+		if _, err := normalizedDeploymentCommitSHA(invalid); err == nil {
+			t.Fatalf("normalizedDeploymentCommitSHA(%q) succeeded, want error", invalid)
+		}
+	}
+}
+
+func TestNormalizedDeploymentRequestID(t *testing.T) {
+	const requestID = "6d1adfcb-7b77-4a93-a476-a492037725e1"
+	if got, err := normalizedDeploymentRequestID(requestID); err != nil || got != requestID {
+		t.Fatalf("normalizedDeploymentRequestID() = %q, %v; want %q", got, err, requestID)
+	}
+	if generated, err := normalizedDeploymentRequestID(""); err != nil {
+		t.Fatalf("normalizedDeploymentRequestID(empty) error = %v", err)
+	} else if _, err := uuid.Parse(generated); err != nil {
+		t.Fatalf("normalizedDeploymentRequestID(empty) = %q, want UUID: %v", generated, err)
+	}
+	if _, err := normalizedDeploymentRequestID("not-a-uuid"); err == nil {
+		t.Fatal("normalizedDeploymentRequestID(invalid) succeeded, want error")
+	}
+}
+
+func TestNormalizedDeploymentReceiptID(t *testing.T) {
+	const deploymentID = "55555555-5555-4555-8555-555555555555"
+	if got, err := normalizedDeploymentReceiptID(deploymentID); err != nil || got != deploymentID {
+		t.Fatalf("normalizedDeploymentReceiptID() = %q, %v; want %q", got, err, deploymentID)
+	}
+	for _, invalid := range []string{"", "deployment-integration-0001", "55555555-5555-4555-8555", "00000000-0000-0000-0000-000000000000"} {
+		if _, err := normalizedDeploymentReceiptID(invalid); err == nil {
+			t.Fatalf("normalizedDeploymentReceiptID(%q) succeeded, want error", invalid)
+		}
+	}
+}
+
+func TestValidateDeploymentReceiptEcho(t *testing.T) {
+	const deploymentID = "55555555-5555-4555-8555-555555555555"
+	if err := validateDeploymentReceiptEcho(deploymentID, deploymentID); err != nil {
+		t.Fatalf("validateDeploymentReceiptEcho() error = %v", err)
+	}
+	for _, echoed := range []string{"", "66666666-6666-4666-8666-666666666666", "not-a-uuid"} {
+		if err := validateDeploymentReceiptEcho(echoed, deploymentID); err == nil {
+			t.Fatalf("validateDeploymentReceiptEcho(%q) succeeded, want error", echoed)
 		}
 	}
 }

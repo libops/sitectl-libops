@@ -429,7 +429,7 @@ func runTaskChatSession(ctx context.Context, clients *taskAPIClients, orgID, tas
 			requestID := uuid.NewString()
 			_, err = sendTaskReply(ctx, clients, orgID, taskID, message, requestID)
 			if err != nil {
-				return fmt.Errorf("failed to reply to task (retry with `sitectl task respond %s <message> --request-id %s`): %w", taskID, requestID, err)
+				return fmt.Errorf("failed to reply to task (retry with `sitectl libops task respond %s <message> --request-id %s`): %w", taskID, requestID, err)
 			}
 			fmt.Fprintln(out, "Reply sent.")
 		default:

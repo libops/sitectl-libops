@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/libops/sitectl-libops/pkg/auth"
 )
 
 const (
-	cacheDir      = ".sitectl/cache"
+	cacheDirName  = "cache"
 	cacheValidity = 12 * time.Hour
 )
 
@@ -28,13 +30,12 @@ type CacheKey struct {
 
 // GetCachePath returns the file path for a cache key
 func (k CacheKey) GetCachePath() (string, error) {
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := cacheRootPath()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", err
 	}
 
 	parts := []string{
-		homeDir,
 		cacheDir,
 		safeCacheSegment(k.Operation),
 	}
@@ -151,9 +152,9 @@ func Invalidate(key CacheKey) error {
 // InvalidatePattern removes all cache entries matching a pattern
 // This is useful for invalidating all caches related to a resource
 func InvalidatePattern(resourceType, resourceID string) error {
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := cacheRootPath()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
 	}
 
 	// Invalidate list cache for this resource type
@@ -181,7 +182,7 @@ func InvalidatePattern(resourceType, resourceID string) error {
 		// Invalidate all sub-resource caches
 		subResources := []string{"firewall", "members", "secrets"}
 		for _, subResource := range subResources {
-			subCacheDir := filepath.Join(homeDir, cacheDir, "list", safeCacheSegment(resourceType), safeCacheSegment(resourceID), safeCacheSegment(subResource))
+			subCacheDir := filepath.Join(cacheDir, "list", safeCacheSegment(resourceType), safeCacheSegment(resourceID), safeCacheSegment(subResource))
 			if err := os.RemoveAll(subCacheDir); err != nil && !os.IsNotExist(err) {
 				return err
 			}
@@ -193,17 +194,24 @@ func InvalidatePattern(resourceType, resourceID string) error {
 
 // Clear removes all cached data
 func Clear() error {
-	homeDir, err := os.UserHomeDir()
+	cachePath, err := cacheRootPath()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return err
 	}
 
-	cachePath := filepath.Join(homeDir, cacheDir)
 	if err := os.RemoveAll(cachePath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
 	return nil
+}
+
+func cacheRootPath() (string, error) {
+	configDir, err := auth.ConfigDirPath()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve sitectl LibOps config directory: %w", err)
+	}
+	return filepath.Join(configDir, cacheDirName), nil
 }
 
 // HashID creates a short hash for cache keys (for very long IDs)

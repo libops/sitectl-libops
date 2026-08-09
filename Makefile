@@ -25,9 +25,12 @@ lint:
 	fi
 
 check-core-version:
-	./scripts/check-sitectl-core-version.sh v1.4.0
+	./scripts/check-sitectl-core-version.sh v1.9.0
 
 test: check-core-version build
 	$(GO) test -v -race ./...
+
+integration-test: check-core-version
+	./scripts/first-customer-integration.sh
 
 check: lint test

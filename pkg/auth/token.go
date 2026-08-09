@@ -9,7 +9,12 @@ import (
 	"time"
 )
 
-const configDirName = ".sitectl"
+const (
+	configDirName = ".sitectl"
+	// ConfigDirEnv lets automation isolate LibOps credentials and caches without
+	// changing the process home directory or touching an operator's config.
+	ConfigDirEnv = "SITECTL_LIBOPS_CONFIG_DIR"
+)
 
 // TokenResponse represents the OAuth token response stored locally.
 type TokenResponse struct {
@@ -40,14 +45,25 @@ func APIKeyFilePath() (string, error) {
 
 // ConfigDirPath returns the path to the local sitectl config directory.
 func ConfigDirPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("unable to detect home directory: %w", err)
+	baseDir := strings.TrimSpace(os.Getenv(ConfigDirEnv))
+	if baseDir != "" {
+		if !filepath.IsAbs(baseDir) {
+			return "", fmt.Errorf("%s must be an absolute path", ConfigDirEnv)
+		}
+		baseDir = filepath.Clean(baseDir)
+		if baseDir == string(filepath.Separator) {
+			return "", fmt.Errorf("%s must not be the filesystem root", ConfigDirEnv)
+		}
+	} else {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("unable to detect home directory: %w", err)
+		}
+		baseDir = filepath.Join(homeDir, configDirName)
 	}
 
-	baseDir := filepath.Join(homeDir, configDirName)
 	if err := os.MkdirAll(baseDir, 0700); err != nil {
-		return "", fmt.Errorf("unable to create ~/.sitectl directory: %w", err)
+		return "", fmt.Errorf("unable to create sitectl LibOps config directory: %w", err)
 	}
 	return baseDir, nil
 }
@@ -96,7 +112,7 @@ func LoadTokens() (*TokenResponse, error) {
 	data, err := root.ReadFile("oauth.json")
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("not authenticated: run 'sitectl login' first")
+			return nil, fmt.Errorf("not authenticated: run 'sitectl libops login' first")
 		}
 		return nil, fmt.Errorf("failed to read token file: %w", err)
 	}
