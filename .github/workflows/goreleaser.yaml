@@ -26,6 +26,7 @@ permissions:
 jobs:
   lint-test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -51,9 +52,12 @@ jobs:
       - name: unit test
         run: make test
 
+      - name: First-customer site and Task Agent integration
+        run: make integration-test
+
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@6c580dd000630ed696249a1a9bbb0fc88efa30d0 # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@aed757251444f4318c70cfa8f3f461b3e9d1d13b # main
     permissions:
       contents: write
       id-token: write
@@ -64,4 +68,4 @@ jobs:
       release-mode: ${{ github.ref_type == 'tag' && 'full' || inputs.release-mode }}
       release-version: ${{ inputs.release-version }}
       package-name: sitectl-libops
-      sitectl-ref: 65cfde137a58ba14aaa9a1512d88b943888872f3
+      sitectl-ref: e0c99fb76bba65049865b4270bc0bcbabab9c3ed # v1.9.0

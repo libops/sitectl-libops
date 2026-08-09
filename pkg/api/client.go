@@ -118,7 +118,7 @@ func NewAuthenticatedHTTPClient(ctx context.Context, apiBaseURL string) (*http.C
 	// Check if token is expired
 	if tokens.IsTokenExpired() {
 		_ = auth.ClearTokens()
-		return nil, fmt.Errorf("authentication token expired, please run 'sitectl login' to re-authenticate")
+		return nil, fmt.Errorf("authentication token expired, please run 'sitectl libops login' to re-authenticate")
 	}
 
 	return &http.Client{

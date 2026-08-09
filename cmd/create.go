@@ -290,9 +290,9 @@ func init() {
 	// Site flags
 	createSiteCmd.Flags().String("project-id", "", "Project ID (required)")
 	createSiteCmd.Flags().String("name", "", "Site name (required)")
-	createSiteCmd.Flags().String("github-repository", "", "GitHub repository URL (required)")
+	createSiteCmd.Flags().String("github-repository", "", "Supported LibOps template repository URL used to create or attach the managed customer repository (required)")
 	createSiteCmd.Flags().String("github-ref", "", "GitHub reference (e.g., heads/main, tags/v1.0)")
-	createSiteCmd.Flags().String("compose-path", "/mnt/disks/data/compose", "Absolute project directory where the managed host stores this site's Docker Compose files.")
+	createSiteCmd.Flags().String("compose-path", ".", "Repository-relative directory containing this site's Docker Compose file")
 	createSiteCmd.Flags().String("compose-file", "compose.yaml", "Docker compose file name")
 	createSiteCmd.Flags().Int32("port", 80, "Port the application listens on")
 	createSiteCmd.Flags().String("application-type", "", "Type of application (drupal, ojs, wordpress, omeka-classic, omeka-s, archivesspace, islandora)")

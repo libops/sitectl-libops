@@ -2,18 +2,22 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	libopsv1 "github.com/libops/proto/libops/v1"
 	commonv1 "github.com/libops/proto/libops/v1/common"
 	"github.com/libops/sitectl-libops/pkg/api"
@@ -23,10 +27,10 @@ import (
 
 type siteEnvironment struct {
 	site    *commonv1.SiteConfig
-	project *commonv1.ProjectConfig
-	org     *commonv1.FolderConfig
 	domains []*commonv1.DomainConfig
 }
+
+const managedRuntimeAppsRoot = "/mnt/disks/data/libops/apps"
 
 var pingCmd = &cobra.Command{
 	Use:   "ping <site-id-or-url>",
@@ -96,8 +100,9 @@ var sshCmd = &cobra.Command{
 		sshUser, _ := cmd.Flags().GetString("ssh-user")
 		sshKey, _ := cmd.Flags().GetString("ssh-key")
 		sshPort, _ := cmd.Flags().GetUint("ssh-port")
-		if sshUser == "" {
-			sshUser = "deploy"
+		sshUser, err = resolveManagedRuntimeSSHUser(cmd.Context(), apiBaseURL, sshUser)
+		if err != nil {
+			return err
 		}
 		if sshPort == 0 {
 			sshPort = 22
@@ -185,7 +190,7 @@ var checkoutCmd = &cobra.Command{
 
 		updateContext, _ := cmd.Flags().GetBool("update-context")
 		if updateContext {
-			if err := saveSiteContext(cmd, env, targetDir); err != nil {
+			if err := saveSiteContext(cmd, env); err != nil {
 				return err
 			}
 		}
@@ -215,7 +220,7 @@ var contextUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return saveSiteContext(cmd, env, "")
+		return saveSiteContext(cmd, env)
 	},
 }
 
@@ -228,18 +233,6 @@ func loadSiteEnvironment(ctx context.Context, client *api.LibopsAPIClient, siteI
 	if site == nil {
 		return nil, fmt.Errorf("site not found")
 	}
-	projectResp, err := client.ProjectService.GetProject(ctx, connect.NewRequest(&libopsv1.GetProjectRequest{
-		ProjectId: site.GetProjectId(),
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get project: %w", err)
-	}
-	orgResp, err := client.OrganizationService.GetOrganization(ctx, connect.NewRequest(&libopsv1.GetOrganizationRequest{
-		OrganizationId: site.GetOrganizationId(),
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get organization: %w", err)
-	}
 	domainResp, err := client.DomainService.ListSiteDomains(ctx, connect.NewRequest(&libopsv1.ListSiteDomainsRequest{
 		SiteId: site.GetSiteId(),
 	}))
@@ -248,13 +241,11 @@ func loadSiteEnvironment(ctx context.Context, client *api.LibopsAPIClient, siteI
 	}
 	return &siteEnvironment{
 		site:    site,
-		project: projectResp.Msg.GetProject(),
-		org:     orgResp.Msg.GetFolder(),
 		domains: domainResp.Msg.GetDomains(),
 	}, nil
 }
 
-func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir string) error {
+func saveSiteContext(cmd *cobra.Command, env *siteEnvironment) error {
 	contextName, _ := cmd.Flags().GetString("context-name")
 	projectDir, _ := cmd.Flags().GetString("project-dir")
 	pluginName, _ := cmd.Flags().GetString("plugin")
@@ -264,20 +255,38 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 	sshPort, _ := cmd.Flags().GetUint("ssh-port")
 	setDefault, _ := cmd.Flags().GetBool("default")
 
+	runtimeSiteKey := managedRuntimeSiteKey(env.site.GetSiteId())
+	if runtimeSiteKey == "" {
+		return fmt.Errorf("site ID is required to resolve the managed runtime Compose project")
+	}
 	if contextName == "" {
-		contextName = defaultContextName(env.site)
+		contextName = runtimeSiteKey
 	}
 	if projectDir == "" {
-		projectDir = checkoutDir
+		projectDir = path.Join(managedRuntimeAppsRoot, runtimeSiteKey)
 	}
 	if pluginName == "" {
 		pluginName = defaultPluginForSite(env.site)
+		if pluginName == "" {
+			return fmt.Errorf("site application type %q does not map to a supported sitectl plugin; pass --plugin explicitly", env.site.GetApplicationType())
+		}
+	}
+	database, ok := managedDatabaseContractForSite(env.site)
+	if !ok {
+		return fmt.Errorf("site application type %q does not map to a supported database contract; pass a supported application type", env.site.GetApplicationType())
 	}
 	if sshHost == "" {
 		sshHost = preferredSSHHostname(env.domains)
 	}
 	if sshUser == "" {
-		sshUser = "deploy"
+		apiBaseURL, err := cmd.Flags().GetString("api-url")
+		if err != nil {
+			return err
+		}
+		sshUser, err = resolveManagedRuntimeSSHUser(cmd.Context(), apiBaseURL, "")
+		if err != nil {
+			return err
+		}
 	}
 	if sshKey == "" {
 		sshKey = defaultSSHKeyPath()
@@ -291,22 +300,24 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 
 	ctx := &sitectlconfig.Context{
 		Name:                   contextName,
-		Site:                   env.site.GetSiteName(),
+		Site:                   env.site.GetSiteId(),
 		Plugin:                 pluginName,
 		DockerHostType:         sitectlconfig.ContextRemote,
-		Environment:            env.site.GetSiteName(),
+		Environment:            managedRuntimeEnvironment(env.site),
 		DockerSocket:           "/var/run/docker.sock",
-		ComposeProjectName:     valueOrDefault(env.project.GetProjectName(), "docker-compose"),
+		ComposeProjectName:     runtimeSiteKey,
+		ComposeNetwork:         runtimeSiteKey + "_default",
 		ProjectDir:             projectDir,
 		SSHUser:                sshUser,
 		SSHHostname:            sshHost,
 		SSHPort:                sshPort,
 		SSHKeyPath:             sshKey,
+		EnvFile:                []string{".env"},
 		ComposeFile:            []string{valueOrDefault(env.site.GetComposeFile(), "compose.yaml")},
-		DatabaseService:        "mariadb",
-		DatabaseUser:           "root",
-		DatabaseName:           "drupal_default",
-		DatabasePasswordSecret: "DB_ROOT_PASSWORD",
+		DatabaseService:        database.service,
+		DatabaseUser:           database.user,
+		DatabaseName:           database.name,
+		DatabasePasswordSecret: database.passwordSecret,
 	}
 
 	if err := sitectlconfig.SaveContext(ctx, setDefault); err != nil {
@@ -315,6 +326,15 @@ func saveSiteContext(cmd *cobra.Command, env *siteEnvironment, checkoutDir strin
 	configPath, _ := sitectlconfig.ConfigFilePath()
 	fmt.Printf("Updated sitectl context %q in %s\n", contextName, configPath)
 	return nil
+}
+
+func managedRuntimeSiteKey(siteID string) string {
+	siteID = strings.ToLower(strings.TrimSpace(siteID))
+	if siteID == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(siteID))
+	return "site-" + hex.EncodeToString(digest[:])[:20]
 }
 
 func preferredSiteDomain(domains []*commonv1.DomainConfig) string {
@@ -423,18 +443,6 @@ func defaultCheckoutDir(repo, siteName string) string {
 	return sanitizeContextPart(siteName)
 }
 
-func defaultContextName(site *commonv1.SiteConfig) string {
-	suffix := strings.ReplaceAll(site.GetSiteId(), "-", "")
-	if len(suffix) > 8 {
-		suffix = suffix[:8]
-	}
-	name := sanitizeContextPart(site.GetSiteName())
-	if suffix != "" {
-		return name + "-" + suffix
-	}
-	return name
-}
-
 func sanitizeContextPart(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	var b strings.Builder
@@ -461,13 +469,76 @@ func sanitizeContextPart(value string) string {
 func defaultPluginForSite(site *commonv1.SiteConfig) string {
 	appType := strings.ToLower(strings.TrimSpace(site.GetApplicationType()))
 	switch appType {
-	case "drupal", "wordpress":
+	case "archivesspace", "drupal", "ojs", "omeka-classic", "omeka-s":
 		return appType
+	case "wordpress", "wp":
+		return "wp"
 	case "islandora", "isle":
 		return "isle"
 	default:
-		return "isle"
+		return ""
 	}
+}
+
+type managedDatabaseContract struct {
+	service        string
+	user           string
+	name           string
+	passwordSecret string
+}
+
+func managedDatabaseContractForSite(site *commonv1.SiteConfig) (managedDatabaseContract, bool) {
+	appType := strings.ToLower(strings.TrimSpace(site.GetApplicationType()))
+	switch appType {
+	case "archivesspace":
+		return managedDatabaseContract{service: "mariadb", user: "archivesspace", name: "archivesspace", passwordSecret: "ARCHIVESSPACE_DB_PASSWORD"}, true
+	case "drupal":
+		return managedDatabaseContract{service: "mariadb", user: "drupal", name: "drupal", passwordSecret: "DRUPAL_DEFAULT_DB_PASSWORD"}, true
+	case "islandora", "isle":
+		return managedDatabaseContract{service: "mariadb", user: "drupal_default", name: "drupal_default", passwordSecret: "DRUPAL_DEFAULT_DB_PASSWORD"}, true
+	case "ojs":
+		return managedDatabaseContract{service: "mariadb", user: "ojs", name: "ojs", passwordSecret: "OJS_DB_PASSWORD"}, true
+	case "omeka-classic":
+		return managedDatabaseContract{service: "mariadb", user: "omeka_classic", name: "omeka_classic", passwordSecret: "OMEKA_CLASSIC_DB_PASSWORD"}, true
+	case "omeka-s":
+		return managedDatabaseContract{service: "mariadb", user: "omeka_s", name: "omeka_s", passwordSecret: "OMEKA_S_DB_PASSWORD"}, true
+	case "wordpress", "wp":
+		return managedDatabaseContract{service: "mariadb", user: "wordpress", name: "wordpress", passwordSecret: "WORDPRESS_DB_PASSWORD"}, true
+	default:
+		return managedDatabaseContract{}, false
+	}
+}
+
+func managedRuntimeEnvironment(site *commonv1.SiteConfig) string {
+	if site != nil && site.GetIsProduction() {
+		return "production"
+	}
+	return "non-production"
+}
+
+func resolveManagedRuntimeSSHUser(ctx context.Context, apiBaseURL, requested string) (string, error) {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return requested, nil
+	}
+
+	account, err := api.GetCurrentAccount(ctx, apiBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("resolve managed runtime SSH account: %w", err)
+	}
+	return managedRuntimeSSHAccountID(account)
+}
+
+func managedRuntimeSSHAccountID(account *api.CurrentAccount) (string, error) {
+	if account == nil {
+		return "", fmt.Errorf("resolve managed runtime SSH account: LibOps API returned no account")
+	}
+
+	accountID := account.ID
+	parsed, err := uuid.Parse(accountID)
+	if err != nil || parsed == uuid.Nil || parsed.String() != accountID || accountID != strings.TrimSpace(accountID) {
+		return "", fmt.Errorf("resolve managed runtime SSH account: LibOps API returned invalid account ID %q", account.ID)
+	}
+	return accountID, nil
 }
 
 func defaultSSHKeyPath() string {
@@ -496,10 +567,10 @@ func valueOrDefault(value, fallback string) string {
 
 func addSiteRuntimeContextFlags(cmd *cobra.Command) {
 	cmd.Flags().String("context-name", "", "sitectl context name")
-	cmd.Flags().String("project-dir", "", "Local or remote compose project directory")
+	cmd.Flags().String("project-dir", "", "Remote Compose checkout directory on the managed host; defaults from the site ID")
 	cmd.Flags().String("plugin", "", "sitectl plugin name; defaults from site application type")
 	cmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
-	cmd.Flags().String("ssh-user", "deploy", "SSH username")
+	cmd.Flags().String("ssh-user", "", "Linux account override; defaults to the authenticated LibOps account UUID provisioned on the managed host")
 	cmd.Flags().Uint("ssh-port", 22, "SSH port")
 	cmd.Flags().String("ssh-key", "", "Local private key used to authenticate the generated sitectl context to the managed host.")
 	cmd.Flags().Bool("default", true, "Set the updated context as current")
@@ -509,7 +580,7 @@ func init() {
 	pingCmd.Flags().Duration("timeout", 30*time.Second, "HTTP timeout")
 
 	sshCmd.Flags().String("ssh-host", "", "SSH hostname override; defaults to the exact hostname returned by the LibOps API")
-	sshCmd.Flags().String("ssh-user", "deploy", "SSH username")
+	sshCmd.Flags().String("ssh-user", "", "Linux account override; defaults to the authenticated LibOps account UUID provisioned on the managed host")
 	sshCmd.Flags().Uint("ssh-port", 22, "SSH port")
 	sshCmd.Flags().String("ssh-key", "", "Local private key used to authenticate the SSH session to the managed host.")
 	sshCmd.Flags().SetInterspersed(false)
