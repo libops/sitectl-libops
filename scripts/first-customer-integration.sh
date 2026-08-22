@@ -27,7 +27,7 @@ export SITECTL_LIBOPS_CONFIG_DIR="${config_dir}"
 export PATH="${bin_dir}:${PATH}"
 
 cd "${repo_root}"
-GOBIN="${bin_dir}" go install -trimpath github.com/libops/sitectl@v1.9.0
+GOBIN="${bin_dir}" go install -trimpath github.com/libops/sitectl@latest
 go build -trimpath -o "${bin_dir}/sitectl-libops" .
 go build -trimpath -o "${bin_dir}/first-customer-mock-api" ./integration/mockapi
 

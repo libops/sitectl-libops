@@ -57,7 +57,7 @@ jobs:
 
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@aed757251444f4318c70cfa8f3f461b3e9d1d13b # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@ec2d455628cf2d2a3497a7661ee7815b0fb1ee2d # main
     permissions:
       contents: write
       id-token: write
