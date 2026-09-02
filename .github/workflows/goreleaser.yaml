@@ -38,12 +38,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.26.5"
+          go-version: "1.27.1"
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
-          version: v2.12.2
+          version: v2.13.2
           install-only: true
 
       - name: lint
@@ -57,7 +57,7 @@ jobs:
 
   goreleaser:
     needs: lint-test
-    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@7277eacc89fca014481b2ca66039f4176509bcfc # main
+    uses: libops/.github/.github/workflows/sitectl-plugin-goreleaser.yaml@782ba8f6514788269e93e0a51c001061279f645a # main
     permissions:
       contents: write
       id-token: write
